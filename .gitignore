@@ -1,0 +1,26 @@
+# ---- 密钥（绝对不能进版本库）----
+.env
+.env.*
+!.env.example
+
+# ---- Python 缓存 ----
+__pycache__/
+*.py[cod]
+
+# ---- 虚拟环境 ----
+.venv/
+venv/
+env/
+
+# ---- 运行产物 ----
+*.log
+logs/
+outputs/
+data/backups/
+
+# ---- IDE / 系统 ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
