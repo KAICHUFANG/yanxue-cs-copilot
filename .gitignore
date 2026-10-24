@@ -20,7 +20,9 @@ data/backups/
 
 # ---- 评测产物（可重新生成，不进仓库）----
 eval/tmp_activities.json
+eval/tmp_activities_ab.json
 eval/report.json
+eval/ab_report.json
 eval/backups/
 
 # ---- IDE / 系统 ----
