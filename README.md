@@ -121,6 +121,10 @@ python eval\write_tests.py                        # 录入回归 18 条
 
 ## 客服工作台（`启动工作台.bat`）
 
+界面用 **Streamlit**（Python 的 Web 界面框架）。之前是手写 tkinter，每加一个交互都要自己算布局、
+也没法边生成边显示。换框架之后拿到的三样东西：**逐字流式输出**、**文本块自带复制按钮**、
+**浏览器打开（将来放服务器上就能远程用）**。旧 tkinter 版保留在 `app_workbench.py`，双击 `备用_旧界面.bat` 可回退。
+
 ```
 ┌────────────────────────────────┬──────────────────────┐
 │                                │ 当前活动  第十六期 ▾  │
@@ -159,13 +163,14 @@ python eval\write_tests.py                        # 录入回归 18 条
 # 1. 建环境
 python -m venv .venv
 .venv\Scripts\activate          # Windows
-pip install -r requirements.txt
+pip install -r requirements.txt   # 国内建议加 -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 2. 配置
 copy .env.example .env           # 然后填入自己的 DEEPSEEK_API_KEY
 
-# 3. 两种用法，任选
-双击 启动工作台.bat                # 图形界面（主入口）
+# 3. 启动
+双击 启动工作台.bat                # 浏览器界面（Streamlit，主入口）
+双击 备用_旧界面.bat               # 旧 tkinter 版，万一新版打不开
 python main.py                   # 命令行
 ```
 
@@ -181,7 +186,8 @@ python main.py --flow    # 打印活动群文案流程总览
 ## 目录结构
 
 ```
-├── app_workbench.py    客服工作台（左对话 / 右状态），唯一入口
+├── app_streamlit.py    客服工作台（Streamlit 版，主入口）
+├── app_workbench.py    客服工作台（tkinter 版，备用）
 ├── main.py             命令行入口（排查用）
 ├── agent.py            三层分工：模型判断类别 → 代码执行
 ├── knowledge.py        上下文装配：把当前活动资料拼成一段
@@ -195,7 +201,7 @@ python main.py --flow    # 打印活动群文案流程总览
 │   ├── archive/             往期留档（不参与查询）
 │   └── *.raw.md             推文原文摘录（核对用）
 ├── eval/
-│   ├── cases.json           回归集 22 条
+│   ├── cases.json           回归集 24 条
 │   ├── cases_real.json      真实家长问法 22 条
 │   ├── cases_hard.json      难题集 14 条
 │   ├── fixtures/            冻结题库（与真实业务数据解耦）

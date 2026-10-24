@@ -67,8 +67,13 @@ _CTX_SYSTEM = """你是「山海科普研学」的家长咨询助手，同时也
 
 def answer_ctx(question: str, activity_id: Optional[str] = None,
                history: Optional[List[Dict[str, Any]]] = None,
-               verbose: bool = False) -> Dict[str, Any]:
-    """纯问答：把当前活动资料给模型，直接回答。不写库、不调用工具。"""
+               verbose: bool = False,
+               stream_cb: Optional[Any] = None) -> Dict[str, Any]:
+    """纯问答：把当前活动资料给模型，直接回答。不写库、不调用工具。
+
+    stream_cb（流式回调）：传了就用 stream=True 逐字推给界面，边生成边显示。
+    没传就是一次性拿完整结果（命令行、评测走这条）。
+    """
     ctx = knowledge.build_context(activity_id)
     msgs: List[Dict[str, Any]] = [{"role": "system", "content": _CTX_SYSTEM + "\n\n" + ctx}]
     for m in (history or [])[-6:]:
@@ -76,12 +81,28 @@ def answer_ctx(question: str, activity_id: Optional[str] = None,
             msgs.append({"role": m["role"], "content": m["content"]})
     msgs.append({"role": "user", "content": question})
 
-    resp = _client.chat.completions.create(
-        model=config.MODEL, messages=msgs, temperature=config.TEMPERATURE)
-    if verbose:
-        print(f"  📎 上下文 {len(ctx)} 字")
-    return {"answer": resp.choices[0].message.content or "",
-            "trace": ["<context>"], "usage": _usage(resp.usage)}
+    if stream_cb is None:
+        resp = _client.chat.completions.create(
+            model=config.MODEL, messages=msgs, temperature=config.TEMPERATURE)
+        if verbose:
+            print(f"  📎 上下文 {len(ctx)} 字")
+        return {"answer": resp.choices[0].message.content or "",
+                "trace": ["<context>"], "usage": _usage(resp.usage)}
+
+    # 流式：边生成边回调。注意流式拿不到 usage，token 统计按 0 记。
+    stream = _client.chat.completions.create(
+        model=config.MODEL, messages=msgs, temperature=config.TEMPERATURE, stream=True)
+    parts: List[str] = []
+    for chunk in stream:
+        if not getattr(chunk, "choices", None):
+            continue
+        delta = chunk.choices[0].delta
+        piece = getattr(delta, "content", None)
+        if piece:
+            parts.append(piece)
+            stream_cb(piece)
+    return {"answer": "".join(parts), "trace": ["<context>"],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
 
 
 # ---------------------------------------------------------------- 输入分类
@@ -346,6 +367,7 @@ def answer_chat(
     activity_id: Optional[str] = None,
     history: Optional[List[Dict[str, Any]]] = None,
     verbose: bool = False,
+    stream_cb: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """所有输入走对话框。
 
@@ -367,6 +389,18 @@ def answer_chat(
         print(f"  🧭 模型判断：{decided['kind']}（{decided['reason'][:40]}）")
     total = decided["usage"]
 
+    def done(out: Dict[str, Any]) -> Dict[str, Any]:
+        """统一收尾：合并 usage、补齐字段、顺手给流式界面回填整段。"""
+        out["usage"] = _merge(total, out.get("usage") or {})
+        out.setdefault("wrote", [])
+        out.setdefault("write_errors", [])
+        out.setdefault("missing", store.missing_fields(knowledge.get_activity(aid) or {}))
+        # 只有 question 那条路是真流式；其余一次性结果在这里整段回调一次，
+        # 界面就不需要为「有没有流式」写两个分支。
+        if stream_cb is not None and (out.get("trace") or [""])[-1] != "<context>":
+            stream_cb(out["answer"])
+        return out
+
     # ---- update ----
     if decided["kind"] == "update" and decided["updates"]:
         good, bad = _valid_updates(decided["updates"])
@@ -379,15 +413,11 @@ def answer_chat(
             out = _confirm_written(question, good, ok, err)
             out["wrote"] = sorted(good) if ok else []
             out["write_errors"] = [] if ok else [err]
-            out["missing"] = store.missing_fields(knowledge.get_activity(aid) or {})
-            out["usage"] = _merge(total, out["usage"])
-            return out
+            return done(out)
         # 抽到的字段全不合法 → 当提问处理，同时把被拒原因带出去
-        out = answer_ctx(question, aid, history)
-        out.update({"wrote": [], "write_errors": bad,
-                    "missing": store.missing_fields(knowledge.get_activity(aid) or {})})
-        out["usage"] = _merge(total, out["usage"])
-        return out
+        out = answer_ctx(question, aid, history, stream_cb=stream_cb)
+        out["write_errors"] = bad
+        return done(out)
 
     # ---- copy ----
     if decided["kind"] == "copy":
@@ -396,19 +426,12 @@ def answer_chat(
             out = {"answer": "要哪种文案？\n"
                              f"· 活动群通知（发在已经报名的家长群）：{STAGE_NAMES}\n"
                              "· 推广文案（发到别的群或朋友圈拉人报名）",
-                   "trace": ["classify", "ask_copy_type"],
-                   "wrote": [], "write_errors": [],
-                   "missing": store.missing_fields(knowledge.get_activity(aid) or {}),
-                   "usage": total}
-            return out
+                   "trace": ["classify", "ask_copy_type"]}
+            return done(out)
 
         # B2 推广/招募文案：没有定稿模板，交给模型写（事实仍取自资料）
         if decided["copy_type"] == "promo":
-            out = write_promo(question, aid)
-            out.update({"wrote": [], "write_errors": [],
-                        "missing": store.missing_fields(knowledge.get_activity(aid) or {})})
-            out["usage"] = _merge(total, out["usage"])
-            return out
+            return done(write_promo(question, aid))
 
         # B1 活动群定稿：代码填模板，原文输出
         text = render_copy(decided["stage"], all_when_empty=False)
@@ -416,21 +439,10 @@ def answer_chat(
             # 认不出是哪个阶段 —— 宁可反问，也不要把 5 个阶段全吐出来
             out = {"answer": f"活动群文案分这几个阶段，你要哪一段？\n{STAGE_NAMES}\n"
                              f"（如果要发到别的群拉人报名，那是推广文案，跟我说「写推广文案」就行）",
-                   "trace": ["classify", "ask_stage"],
-                   "wrote": [], "write_errors": [],
-                   "missing": store.missing_fields(knowledge.get_activity(aid) or {}),
-                   "usage": total}
-            return out
+                   "trace": ["classify", "ask_stage"]}
+            return done(out)
 
-        out = {"answer": text, "trace": ["classify", "render_group_messages"],
-               "wrote": [], "write_errors": [],
-               "missing": store.missing_fields(knowledge.get_activity(aid) or {}),
-               "usage": total}
-        return out
+        return done({"answer": text, "trace": ["classify", "render_group_messages"]})
 
     # ---- question ----
-    out = answer_ctx(question, aid, history)
-    out.update({"wrote": [], "write_errors": [],
-                "missing": store.missing_fields(knowledge.get_activity(aid) or {})})
-    out["usage"] = _merge(total, out["usage"])
-    return out
+    return done(answer_ctx(question, aid, history, stream_cb=stream_cb))
