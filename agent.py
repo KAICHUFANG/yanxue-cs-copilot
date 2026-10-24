@@ -319,107 +319,169 @@ def _write_tool_schema() -> list:
     return []
 
 
-# 纯枚举值的补充信息：这些是**确定性判断**，不该交给模型去猜。
+
+
+# 输入分类：这句话是「补充活动信息」还是「在问问题」？
 #
-# 为什么需要这一段（真实故障）：
-#   客服在对话框里打「室外」两个字，模型把它当成提问，回答「这一期我这边没有记录…」，
-#   数据一个没写进去；而打「室内」两个字它就正常写了。
-#   同一类输入两种结果 —— 说明这不是能力问题，是这一层根本不该让模型判断。
+# 这一层**全部交给模型判断，代码里没有任何关键词表**。
+# 之前试过用规则判定枚举值，代价是被反复证伪：
+#   · 「室内还是室外」被当成问句，写不进去
+#   · 「这次活动不是室内的」被写成「室内」，正好反了
+#   · 「如果下雨就转室内」被当成赋值
+#   · 「不分组」被否定词黑名单误杀
+# 每修一次都要加一条规则，说明「判断这句话在说什么」本来就是语义问题，
+# 规则只能覆盖字面，覆盖不了意义。所以这一层回到模型。
 #
-#   判断规则很硬：整句去掉修饰后，剩下的就是一个确定的枚举值，且不含疑问词。
-#   满足就直接写库，模型只负责说一句确认。
-_ENUM_MAP = {
-    "室内": ("indoor_outdoor", "室内"),
-    "室外": ("indoor_outdoor", "室外"),
-    "不分组": ("grouping", "不分组"),
-    "分组": ("grouping", "分组"),
-    "已结束": ("status", "已结束"),
-    "报名中": ("status", "报名中"),
-    "待确认": ("status", "待确认"),
-}
+# 代码只留下**它该管的事**：字段白名单、类型校验、写前备份（在 store 里）。
+# 判断归模型，纪律归代码。
 
-_QUESTION_HINTS = ["还是", "吗", "？", "?", "哪", "多少", "怎么", "几", "是不是", "有没有"]
+_CLASSIFY_SYSTEM = """你是客服助手的输入判断器。判断客服这句话属于哪一类。
 
-# 剥掉前后中性词之后，剩下的必须**正好**是一个枚举值，才算赋值。
-# 用正则而不是字符串前缀表：期次写法多样（第十六期是 / 第16期 / 16期）。
-_PREFIX_RE = re.compile(
-    r"^(这次是|这期是|本期是|这一期是|活动是|是的|是|第?[一二三四五六七八九十0-9]+期(是)?)")
-_SUFFIX_STRIP = ["活动", "的", "啊", "吧", "哦", "呢", "呀", "了", "嘛"]
+A. update —— 在补充或修改这一期活动信息
+   例：「室外」「不分组」「这期是室外活动」「集合点改到五教104」「每组4到5人」
+       「不是室内，是室外」「室内还是室外：室外」
+B. question —— 在问问题，或者要一段文案
+   例：「室内有空调吗」「几点集合」「这次活动是不是室内的」「帮我写群文案」
 
+判断要点：
+· 只给了一个词或一个值、没有任何疑问语气 → update
+· 有否定或条件时，先正确理解含义再定值：
+  「不是室内」→ 室外；「如果下雨就转室内」→ 这不是在改活动属性，按 question 处理
+· 拿不准的时候选 question（宁可多问一句，也不要乱写库）
+· 只抽客服**明确说过**的字段，没说的一律不要填，不要编「校门口」「上午」这种默认值
 
-def _pure_enum(text: str):
-    """整段就是一个裸枚举值时返回 (字段, 值)，否则 None。
+可选字段（只能用这些键名）：
+__FIELDS__
 
-    只做**精确匹配**：剥掉「是 / 这期是 / 的 / 吧」这类中性词后，剩下的要正好等于一个枚举值。
+值的要求：
+· date 用 YYYY-MM-DD；capacity / duration_minutes 用数字；pricing 是 {"model":..,"tiers":[{"label":..,"price":数字}]}
+· indoor_outdoor 只能是「室内」或「室外」这样的短语，不要写成一整段说明
+· grouping 用「分组」或「不分组」；group_size 用「4-5人」这类短语
+· 其余是字符串
 
-    为什么这样就能防住否定和上下文——靠的是「不从中截取」，不是靠黑名单：
-        这次活动不是室内的  → 剥完还是「这次活动不是室内」→ 不匹配 → 交模型
-        这期不是室内        → 「这期不是室内」→ 不匹配 → 交模型
-        如果下雨就转室内    → 不匹配 → 交模型
-        室外，不是室内      → 「室外不是室内」→ 不匹配 → 交模型
-        不分组              → 「不分组」正好是枚举值 → 写入 ✓
-    一度想加「否定词黑名单」，但「不分组」本身就带「不」，黑名单会把它误杀。
-    精确匹配天然安全，不需要黑名单。
-    """
-    if any(h in text for h in _STRONG_QUESTION):
-        return None
-    t = re.sub(r"[^\u4e00-\u9fa5]", "", text)
-    t = _PREFIX_RE.sub("", t)
-    for s in _SUFFIX_STRIP:
-        while t.endswith(s) and len(t) > len(s):
-            t = t[:-len(s)]
-    return _ENUM_MAP.get(t)
+只输出 JSON：
+{"kind": "update" | "question", "updates": {字段: 值}, "reason": "一句话说明依据"}
+"""
 
 
-# 「这到底是不是一个真问题」的强信号。注意刻意不含「还是」——
-# 「室内还是室外」是客服照抄字段名，不是家长在提问。
-_STRONG_QUESTION = ["吗", "呢", "？", "?", "怎么", "如何", "多少", "几个", "哪里",
-                    "哪个", "哪期", "是否", "能不能", "可不可以", "有没有"]
-
-# 虚词：剔掉字段词之后如果只剩这些，说明客服只是在报字段名
-_FILLER = set(" 的了啊吧哦呢呀嘛，。！？?、：:；;这期本那是个一和或都还活动")
-
-
-def _is_field_only(raw: str) -> bool:
-    """判断是不是「只报了字段名、没给值」。"""
-    if any(h in raw for h in _STRONG_QUESTION):
-        return False
-    rest = raw
-    for w in ("室内", "室外", "分组"):
-        rest = rest.replace(w, "")
-    return all(ch in _FILLER for ch in rest)
+def _field_menu() -> str:
+    import store
+    import knowledge
+    act = knowledge.get_activity() or {}
+    lines = []
+    for k, desc in store.ALLOWED_FIELDS.items():
+        cur = act.get(k)
+        cur_txt = "（空）" if cur in (None, "", [], {}) else "（现值：" + str(cur)[:24] + "）"
+        lines.append(f"- {k}：{desc}{cur_txt}")
+    return "\n".join(lines)
 
 
-def _enum_probe(text: str):
-    """返回 (字段, 值)。值是 None 表示「只说了字段名，没给值，应该反问」。
+def classify_input(question: str, activity_id: Optional[str] = None) -> Dict[str, Any]:
+    """让模型判断「补充信息」还是「提问」。返回 {kind, updates, reason}。"""
+    resp = _client.chat.completions.create(
+        model=config.MODEL,
+        messages=[
+            {"role": "system", "content": _CLASSIFY_SYSTEM.replace("__FIELDS__", _field_menu())},
+            {"role": "user", "content": question},
+        ],
+        temperature=0,
+        response_format={"type": "json_object"},
+    )
+    text = resp.choices[0].message.content or ""
+    u = resp.usage
+    try:
+        m = re.search(r"\{.*\}", text, re.S)
+        data = json.loads(m.group(0)) if m else {}
+    except Exception:
+        data = {}
 
-    边界（拿真实反例换来的）：
-        只有「除这个值以外什么都没有」的输入，代码才敢拍板。
-        句子只要还带别的语义成分——否定、条件、比较、疑问——一律 return None 交模型。
+    kind = data.get("kind")
+    if kind not in ("update", "question"):
+        kind = "question"          # 判不出来就当提问，绝不瞎写
+    updates = data.get("updates") if isinstance(data.get("updates"), dict) else {}
+    return {
+        "kind": kind,
+        "updates": updates,
+        "reason": data.get("reason", ""),
+        "usage": {"prompt_tokens": getattr(u, "prompt_tokens", 0) or 0,
+                  "completion_tokens": getattr(u, "completion_tokens", 0) or 0,
+                  "total_tokens": getattr(u, "total_tokens", 0) or 0},
+    }
 
-    反例（都被这条边界挡住了）：
-        这次活动不是室内的   → 交模型（代码会把「不」忽略掉，写成室内，正好反了）
-        如果下雨就转室内     → 交模型（这是条件句，不是赋值）
-        室外，不是室内       → 交模型（两个值 + 否定，只有模型分得清）
-    """
-    raw = (text or "").strip()
 
-    # ① 「字段：值」写法
-    for sep in ("：", ":", "=", "＝"):
-        if sep in raw:
-            return _pure_enum(raw.rsplit(sep, 1)[-1])
+def _answer_context(question: str, activity_id: Optional[str],
+                    history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """纯问答：把这一期资料给模型，直接回答。不提供任何工具。"""
+    import knowledge
+    ctx = knowledge.build_context(activity_id)
+    msgs: List[Dict[str, Any]] = [
+        {"role": "system", "content": _CTX_SYSTEM + "\n\n" + ctx},
+    ]
+    for m in (history or [])[-6:]:
+        if m.get("role") in ("user", "assistant") and m.get("content"):
+            msgs.append({"role": m["role"], "content": m["content"]})
+    msgs.append({"role": "user", "content": question})
 
-    # ② 整句就是一个裸值
-    hit = _pure_enum(raw)
-    if hit:
-        return hit
+    resp = _client.chat.completions.create(
+        model=config.MODEL, messages=msgs, temperature=config.TEMPERATURE)
+    u = resp.usage
+    return {
+        "answer": resp.choices[0].message.content or "",
+        "trace": ["<context>"],
+        "usage": {"prompt_tokens": getattr(u, "prompt_tokens", 0) or 0,
+                  "completion_tokens": getattr(u, "completion_tokens", 0) or 0,
+                  "total_tokens": getattr(u, "total_tokens", 0) or 0},
+    }
 
-    # ③ 只提到字段名，没给值
-    if _is_field_only(raw):
-        if "室内" in raw or "室外" in raw:
-            return ("indoor_outdoor", None)
-        return ("grouping", None)
-    return None
+
+def _confirm_written(question: str, updates: Dict[str, Any], activity_id: str,
+                     ok: bool, err: str) -> Dict[str, Any]:
+    """写完（或写失败）之后，让模型用一句人话回复客服。"""
+    import knowledge
+    import store
+    act = knowledge.get_activity(activity_id) or {}
+    left = [m["label"] for m in store.missing_fields(act)]
+
+    if ok:
+        done = "、".join(f"{k}={v}" for k, v in updates.items())
+        note = (f"已经写入的字段：{done}\n"
+                f"这一期还缺：{'、'.join(left) if left else '无'}")
+    else:
+        note = f"写入失败，原因是：{err}"
+
+    resp = _client.chat.completions.create(
+        model=config.MODEL,
+        messages=[
+            {"role": "system", "content":
+             "你在回复客服（不是家长）。用一到两句话说明这次录入的结果："
+             "写了什么 / 为什么没写进去。已经写成功就简短确认，不要重复罗列资料。"
+             "缺项由界面右侧显示，你只要在确实有必要时提一句。"},
+            {"role": "user", "content": f"客服说的话：{question}\n\n系统实际情况：\n{note}"},
+        ],
+        temperature=0,
+    )
+    u = resp.usage
+    return {
+        "answer": resp.choices[0].message.content or "",
+        "trace": ["classify", "update_activity"],
+        "usage": {"prompt_tokens": getattr(u, "prompt_tokens", 0) or 0,
+                  "completion_tokens": getattr(u, "completion_tokens", 0) or 0,
+                  "total_tokens": getattr(u, "total_tokens", 0) or 0},
+    }
+
+
+def _valid_updates(updates: Dict[str, Any]):
+    """代码只做校验：字段必须在白名单里。判断归模型，纪律归代码。"""
+    import store
+    good, bad = {}, []
+    for k, v in (updates or {}).items():
+        if k in store.ALLOWED_FIELDS and v not in (None, "", [], {}):
+            good[k] = v
+        elif k not in store.ALLOWED_FIELDS:
+            bad.append(f"未知字段 {k}")
+        else:
+            bad.append(f"{k} 是空值")
+    return good, bad
 
 
 def answer_chat(
@@ -428,141 +490,57 @@ def answer_chat(
     history: Optional[List[Dict[str, Any]]] = None,
     verbose: bool = False,
 ) -> Dict[str, Any]:
-    """v6：全部输入走对话框。读=直接答，写=调 update_activity。
+    """所有输入走对话框。
 
-    返回里除了 answer，还有：
-        wrote        这次写了哪几个字段（空列表 = 没写）
-        write_errors 写入失败的原因（空列表 = 都成功了）
-        trace        实际调用的工具
-        missing      写完之后这一期还缺什么
+    流程：
+        ① 模型判断这是「补充信息」还是「提问」（classify_input）
+        ② 补充信息 → 代码校验字段白名单 → store 写入（带备份）→ 模型说一句确认
+        ③ 提问     → 把这一期资料给模型，直接回答
+
+    全流程没有关键词表。判断是模型的事，写入纪律是代码的事。
     """
     import knowledge
+    aid = activity_id or knowledge.current_activity_id()
 
-    ctx = knowledge.build_context(activity_id)
-    sys_msg = _CTX_SYSTEM + "\n\n" + ctx + "\n\n" + _WRITE_HINT
+    decided = classify_input(question, aid)
+    if verbose:
+        print(f"  🧭 模型判断：{decided['kind']} （{decided['reason'][:40]}）")
+    total = dict(decided["usage"])
 
-    trace: List[str] = []
-    wrote: List[str] = []
-    write_errors: List[str] = []
+    if decided["kind"] == "update" and decided["updates"]:
+        good, bad = _valid_updates(decided["updates"])
+        if verbose:
+            print(f"  📝 抽到的字段：{good}   被拒：{bad}")
+        if not good:
+            out = _answer_context(question, aid, history)
+            out["wrote"], out["write_errors"], out["missing"] = [], bad, []
+            return out
 
-    # ---- 第一步：纯枚举值由代码直接写，不问模型 ----
-    quick = _enum_probe(question)
-    if quick and activity_id:
-        field, value = quick
+        raw = tools.call_tool("update_activity", json.dumps(
+            {"activity_id": aid, "updates": good}, ensure_ascii=False))
+        try:
+            res = json.loads(raw)
+        except Exception:
+            res = {"ok": False, "error": raw}
 
-        if value is None:
-            # 只说了字段名，没给值。不要猜，直接反问一句要个词。
-            sys_msg += (f"\n\n【系统判断】\n客服只提到了字段 `{field}`，没有说具体值。\n"
-                        f"请**只问一句**要她补一个值（比如「这期是室内还是室外？说一个词就行」），"
-                        f"不要调用任何工具，也不要回答家长视角的问题。")
-            if verbose:
-                print(f"  ❓ 只提到字段 {field}，等客服给值")
-            quick = None
-            tool_msgs_override = []
-        else:
-            tool_msgs_override = None
-            raw = tools.call_tool("update_activity", json.dumps(
-                {"activity_id": activity_id, "updates": {field: value}}, ensure_ascii=False))
-            trace.append("update_activity")
-            wrote.append(field)
-            try:
-                res = json.loads(raw)
-            except Exception:
-                res = {"ok": False, "error": raw}
-            if res.get("ok"):
-                sys_msg += (f"\n\n【系统已经做完的事】\n"
-                            f"这条输入被识别为补充信息，已直接写入：{field} = {value}。\n"
-                            f"你只需要用一句话确认，**不要调用任何工具**，"
-                            f"也不要说「还缺几项」——右侧面板会显示。")
-            else:
-                write_errors.append(str(res.get("error") or res))
-                sys_msg += (f"\n\n【系统写入失败】\n原因：{res.get('error') or res}\n"
-                            f"请如实告诉客服没写进去，并说明原因。")
-            if verbose:
-                print(f"  ⚡ 代码直接写：{field} = {value} → ok={res.get('ok')}")
-    else:
-        tool_msgs_override = None
+        ok = bool(res.get("ok"))
+        err = "" if ok else str(res.get("error") or res)
+        out = _confirm_written(question, good, aid, ok, err)
+        out["wrote"] = sorted(good) if ok else []
+        out["write_errors"] = [] if ok else [err]
 
-    msgs: List[Dict[str, Any]] = [{"role": "system", "content": sys_msg}]
-    for m in (history or [])[-6:]:
-        if m.get("role") in ("user", "assistant") and m.get("content"):
-            msgs.append({"role": m["role"], "content": m["content"]})
-    msgs.append({"role": "user", "content": question})
-
-    # 代码已经写完（或只是问了字段名）的情况就不给工具了，避免它自作主张再写一遍
-    if quick and quick[1] is not None:
-        tool_msgs = []
-    elif tool_msgs_override == []:
-        tool_msgs = []
-    else:
-        tool_msgs = _write_tool_schema()
-    pt = ct = 0
-
-    for round_no in range(3):
-        kwargs: Dict[str, Any] = {
-            "model": config.MODEL,
-            "messages": msgs,
-            "temperature": config.TEMPERATURE,
-        }
-        if tool_msgs:
-            kwargs["tools"] = tool_msgs
-            kwargs["tool_choice"] = "auto"
-
-        resp = _client.chat.completions.create(**kwargs)
-        if resp.usage:
-            pt += resp.usage.prompt_tokens or 0
-            ct += resp.usage.completion_tokens or 0
-        msg = resp.choices[0].message
-
-        if not msg.tool_calls:
-            answer = msg.content or ""
-            msgs.append({"role": "assistant", "content": answer})
-            break
-
-        msgs.append({
-            "role": "assistant",
-            "content": msg.content or "",
-            "tool_calls": [
-                {"id": tc.id, "type": "function",
-                 "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                for tc in msg.tool_calls
-            ],
-        })
-        for tc in msg.tool_calls:
-            result = tools.call_tool(tc.function.name, tc.function.arguments)
-            trace.append(tc.function.name)
-            # 从参数里捞出这次写了哪些字段，供界面刷新状态；
-            # 同时看返回值判断到底写成功没有——不能光凭模型说「已写入」
-            try:
-                args = json.loads(tc.function.arguments or "{}")
-                wrote.extend((args.get("updates") or {}).keys())
-                res = json.loads(result)
-                if isinstance(res, dict) and res.get("ok") is False:
-                    write_errors.append(str(res.get("error") or res))
-            except Exception:
-                pass
-            if verbose:
-                print(f"  🔧 {tc.function.name} → {str(result)[:120]}")
-            msgs.append({"role": "tool", "tool_call_id": tc.id, "content": result})
-    else:
-        answer = "（抱歉，我没能在限定轮次内给出结果，请换个说法再试一次）"
-
-    # 写没写成功，以磁盘上的实际情况为准，不看模型怎么说
-    missing: List[Dict[str, str]] = []
-    if wrote:
+        act = knowledge.get_activity(aid) or {}
         try:
             import store
-            act = knowledge.get_activity(activity_id)
-            if act:
-                missing = store.missing_fields(act)
+            out["missing"] = store.missing_fields(act)
         except Exception:
-            pass
+            out["missing"] = []
+        for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            out["usage"][k] = total.get(k, 0) + out["usage"].get(k, 0)
+        return out
 
-    return {
-        "answer": answer,
-        "trace": trace or ["<context>"],
-        "wrote": sorted(set(wrote)),
-        "write_errors": write_errors,
-        "missing": missing,
-        "usage": {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct},
-    }
+    out = _answer_context(question, aid, history)
+    out["wrote"], out["write_errors"], out["missing"] = [], [], []
+    for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        out["usage"][k] = total.get(k, 0) + out["usage"].get(k, 0)
+    return out
