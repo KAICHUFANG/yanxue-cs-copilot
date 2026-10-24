@@ -69,60 +69,42 @@ def _strip(obj: Any) -> Any:
 
 
 def current_activity_id() -> Optional[str]:
-    """当前活动是哪一期。
+    """当前活动的 id。
 
-    优先级：
-      1. 显式指定（界面选中 / 命令行参数）
-      2. 「报名中」的那一期 —— 客服服务的就是当期
-    注意：这里**不从问题里猜**。猜期次是 v2 的病根。
+    存储模型是**单活动**：文件里永远只有一条，就是正在办的那一期。
+    办完了直接覆盖成新的一期，往期放在 data/archive/ 只留档、不再查询。
+    之所以还留着 id，只是为了备份文件名和日志好看。
     """
     acts = load_activities().get("activities", [])
-    for a in acts:
-        if a.get("status") == "报名中":
-            return a["id"]
     return acts[0]["id"] if acts else None
 
 
 def get_activity(activity_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    aid = activity_id or current_activity_id()
-    for a in load_activities().get("activities", []):
-        if a["id"] == aid:
-            return a
-    return None
+    """当前活动。activity_id 参数保留只为兼容旧调用，实际一律返回当前那一条。"""
+    acts = load_activities().get("activities", [])
+    return acts[0] if acts else None
 
 
 def build_context(activity_id: Optional[str] = None) -> str:
-    """拼出「当前活动 + 通用规则 + 流程 + 文案模板」的完整上下文。"""
+    """拼出「当前活动 + 通用规则 + 流程 + 文案模板」的完整上下文。
+
+    单活动模型下不需要区分期次：资料里永远只有一条活动，就是正在办的那一期。
+    """
     kb = load_activities()
-    aid = activity_id or current_activity_id()
-    act = get_activity(aid)
+    act = get_activity()
 
     parts: List[str] = []
 
     if act is None:
-        parts.append(f"【当前活动】知识库里没有 {aid} 这一期的记录。"
-                     "家长问到具体数据时，如实说「这一期我这边没有记录」，不要用别的期次顶替。")
+        parts.append("【当前活动】知识库里还没有活动记录。"
+                     "家长问到具体数据时，如实说「这一期我这边没有记录」，不要编。")
     else:
         parts.append(
             f"【当前活动】{act.get('session_label') or act.get('id')}"
             f"「{act.get('title', '')}」（{act.get('status', '')}）\n"
-            "家长就在这一期的群里，问题默认都是问这一期。**不需要向家长确认是哪一期。**\n"
+            "这是当前唯一在办的活动，家长的问题默认都是问它。**不需要向家长确认是哪一期。**\n"
             + json.dumps(_strip(act), ensure_ascii=False, indent=1)
         )
-
-    # 全部期次的概要一直放进来。
-    # 家长偶尔会问「你们办过哪些活动」，v3 没有工具可以去「查」，那就让资料一直在场。
-    # 概要只有几十字一条，比为了这一个问题保留一整套路由便宜得多。
-    brief = []
-    for a in kb.get("activities", []):
-        brief.append(
-            f"· {a.get('session_label') or a.get('id')}「{a.get('title', '')}」"
-            f" {a.get('date', '')} {a.get('weekday', '')} —— {a.get('status', '')}"
-        )
-    parts.append(
-        "【全部期次概要】回答「办过哪些活动」时用这个，不要编造没列出来的期次。\n"
-        + "\n".join(brief)
-    )
 
     parts.append("【跨期通用规则】\n" + json.dumps(_strip(kb.get("policies", {})), ensure_ascii=False, indent=1))
     parts.append("【品牌信息】\n" + json.dumps(_strip(kb.get("brand", {})), ensure_ascii=False, indent=1))

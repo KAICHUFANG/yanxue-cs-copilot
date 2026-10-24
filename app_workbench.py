@@ -117,19 +117,15 @@ class Workbench:
 
     # ------------------------------------------------------------ 右侧：状态
     def _build_right(self, parent):
-        # 期次选择
+        # 当前活动（单活动模型：没有期次可选，就是正在办的那一期）
         top = tk.Frame(parent, bg=BG)
         top.pack(fill=tk.X)
         tk.Label(top, text="当前活动", font=FONT_SMALL, bg=BG, fg=FG_MUTED).pack(anchor="w")
-
-        acts = knowledge.load_activities().get("activities", [])
-        self.act_map = {f"{a.get('session_label') or a['id']}　{a.get('title', '')}"[:26]: a["id"]
-                        for a in acts}
-        cur = next((k for k, v in self.act_map.items() if v == self.activity_id), "")
-        self.act_box = ttk.Combobox(top, values=list(self.act_map), state="readonly", font=FONT_SMALL)
-        self.act_box.set(cur)
-        self.act_box.pack(fill=tk.X, pady=(2, 8))
-        self.act_box.bind("<<ComboboxSelected>>", self.on_switch)
+        act = knowledge.get_activity() or {}
+        head = f"{act.get('session_label', '')}　{act.get('title', '')}".strip() or "（还没有活动）"
+        self.act_label = tk.Label(top, text=head, font=("Microsoft YaHei UI", 10, "bold"),
+                                  bg=BG, fg=FG_BOT, anchor="w", justify="left", wraplength=300)
+        self.act_label.pack(fill=tk.X, pady=(2, 8))
 
         # 字段状态清单（可滚动）
         box = tk.Frame(parent, bg=PANEL_BG, relief=tk.SOLID, borderwidth=1)
@@ -267,13 +263,6 @@ class Workbench:
         return str(v)[:60]
 
     # ------------------------------------------------------------ 动作
-    def on_switch(self, _e=None):
-        picked = self.act_box.get()
-        self.activity_id = self.act_map.get(picked)
-        self.conversation = []
-        self.sys(f"（已切换到 {picked}）")
-        self.refresh_status()
-
     def send(self):
         if self.busy:
             return

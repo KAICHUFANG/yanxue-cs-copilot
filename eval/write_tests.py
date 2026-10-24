@@ -71,10 +71,18 @@ CASES = [
     ("几点集合", None),
 ]
 
-# 跨期护栏：粘贴别期内容，必须被拦下
-CROSS = "【第十七期｜海岛珊瑚守护者】研学活动招募\n时间：2026年11月7日（周六）14:00-17:30\n名额：30人\n集合：13:40 在海大北门集合\n"
-GUARD_BLOCK = [CROSS]
-GUARD_PASS = ["【第十六期】名额改成28人", "名额改成28人"]
+# 粘贴新一期推文 = 整条替换成新活动。单活动模型下这是**正常用法**，不是错误：
+# 一期办完，客服直接把新推文粘进来，旧的那条被覆盖（覆盖前 store 会自动备份）。
+NEW_TWEET = """【第十七期｜海岛珊瑚守护者】研学活动招募
+时间：2026年11月7日（周六）14:00-17:30
+名额：30人
+集合：13:40 在海大北门集合
+"""
+REPLACE_CASES = [
+    (NEW_TWEET, {"session_label": "第十七期", "capacity": 30, "meeting_point": "海大北门"}),
+]
+# 不该被当成「换活动」的普通改字段
+STAY_CASES = ["名额改成28人", "这支队伍17个人，名额改成28人"]
 
 
 def check(expect: dict, before: dict, after: dict) -> bool:
@@ -96,8 +104,9 @@ def check(expect: dict, before: dict, after: dict) -> bool:
 
 def main() -> int:
     config.check()
+    total = len(CASES) + len(REPLACE_CASES) + len(STAY_CASES)
     print("=" * 78)
-    print(f"录入测试：{len(CASES)} 条常规 + {len(GUARD_BLOCK)} 条跨期拦截 + {len(GUARD_PASS)} 条放行")
+    print(f"录入测试：{len(CASES)} 条常规 + {len(REPLACE_CASES)} 条整期替换 + {len(STAY_CASES)} 条普通改字段")
     print(f"题库副本：{TMP.name}（不动真实数据）")
     print("=" * 78)
 
@@ -119,30 +128,37 @@ def main() -> int:
         print(f"   回复（{len(r['answer'])}字）：{r['answer'][:80].replace(chr(10), ' ')}")
 
     print("\n" + "-" * 78)
-    print("跨期护栏")
+    print("整期替换（粘新一期推文 → 覆盖成新活动，旧数据自动备份）")
     print("-" * 78)
 
-    for q in GUARD_BLOCK:
+    for q, expect in REPLACE_CASES:
         reset()
         before = snap()
         r = agent.answer_chat(q, activity_id="S16")
-        ok = before == snap()
+        after = snap()
+        changed = {k: v for k, v in after.items() if before.get(k) != v}
+        ok = check(expect, before, after)
         if not ok:
             bad += 1
-        print(f"\n{'✅' if ok else '❌'} [应拦下] {q[:34].replace(chr(10), ' / ')}")
-        print(f"   磁盘变了吗：{'没变 ✅' if ok else '变了 ❌'}")
+        print(f"\n{'✅' if ok else '❌'} {q.splitlines()[0]}")
+        print(f"   写入 {len(r['wrote'])} 个字段   磁盘变化 {list(changed)}")
+        print(f"   session_label：{before.get('session_label')} → {after.get('session_label')}")
         print(f"   回复：{r['answer'][:90].replace(chr(10), ' ')}")
 
-    for q in GUARD_PASS:
+    print("\n" + "-" * 78)
+    print("普通改字段（不应该被当成换活动）")
+    print("-" * 78)
+
+    for q in STAY_CASES:
         reset()
         r = agent.answer_chat(q, activity_id="S16")
-        ok = bool(r["wrote"]) and not r["write_errors"]
+        after = snap()
+        ok = after.get("capacity") == 28 or str(after.get("capacity")) == "28"
         if not ok:
             bad += 1
-        print(f"\n{'✅' if ok else '❌'} [应放行] {q}")
-        print(f"   写入 {r['wrote']}")
+        print(f"\n{'✅' if ok else '❌'} {q}")
+        print(f"   写入 {r['wrote']}   capacity={after.get('capacity')}")
 
-    total = len(CASES) + len(GUARD_BLOCK) + len(GUARD_PASS)
     print("\n" + "=" * 78)
     print(f"合计 {total} 条，失败 {bad} 条")
     print("=" * 78)

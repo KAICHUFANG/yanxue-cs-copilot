@@ -159,8 +159,12 @@ def missing_fields(activity: Dict[str, Any]) -> List[Dict[str, str]]:
 
 
 # ---------------------------------------------------------------- 对外接口
-def update_activity(activity_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
-    """更新某一期活动的字段。
+def update_activity(activity_id: Optional[str], updates: Dict[str, Any]) -> Dict[str, Any]:
+    """更新**当前活动**的字段。
+
+    存储模型是单活动：文件里只有一条，就是正在办的那一期。
+    所以 activity_id 只是为了兼容旧调用和日志，实际一律写那一条 ——
+    传进来的期次和文件里的对不上，说明模型带了过期的 id，以文件为准。
 
     设计要点：
       · 只接受白名单字段，未知字段直接拒绝并在返回里列出
@@ -168,26 +172,15 @@ def update_activity(activity_id: str, updates: Dict[str, Any]) -> Dict[str, Any]
       · 写前自动备份
       · 返回「还缺什么」，让客服知道下一步该问负责人什么
     """
-    m = re.search(r"(\d+)", activity_id or "")
-    if not m:
-        return {"ok": False, "error": f"无法识别期次：{activity_id}"}
-    key = f"S{int(m.group(1)):02d}"
-
     if not isinstance(updates, dict) or not updates:
         return {"ok": False, "error": "没有收到要更新的字段"}
 
     kb = load()
-    target = None
-    for a in kb["activities"]:
-        if a["id"] == key:
-            target = a
-            break
-    if target is None:
-        return {
-            "ok": False,
-            "error": f"知识库里没有 {key} 这一期，请先录入活动内容",
-            "existing": [a["id"] for a in kb["activities"]],
-        }
+    acts = kb.get("activities") or []
+    if not acts:
+        return {"ok": False, "error": "知识库里还没有活动记录"}
+    target = acts[0]
+    key = target.get("id")
 
     rejected: List[Dict[str, str]] = []
     errors: List[str] = []

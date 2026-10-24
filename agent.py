@@ -469,8 +469,7 @@ _CN_DIGITS = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四":
 def _session_no(text: Any) -> Optional[int]:
     """从「第十六期」「第十七期」「S16」「16」里取出期次数字。
 
-    必须认中文数字：模型抽出来的 session_label 常常是「第十七期」而不是「17」，
-    只抓阿拉伯数字会漏，护栏就形同虚设（实测踩过）。
+    单活动模型下已经不需要拿它做路由了，只留着打日志和给备份文件命名用。
     """
     s = str(text or "")
     m = re.search(r"第?\s*(\d{1,2})\s*期", s) or re.search(r"[sS]\s*(\d{1,2})", s)
@@ -491,25 +490,6 @@ def _session_no(text: Any) -> Optional[int]:
     return _CN_DIGITS.get(t) if len(t) == 1 else None
 
 
-def _cross_session_guard(updates: Dict[str, Any], activity_id: str):
-    """拦下「把别期的内容写进这一期」。
-
-    真实事故：客服在改第十六期，顺手把第十七期的推文粘进来，
-    模型抽出 session_label=第十七期、date=2026-11-07…，代码原样写入，
-    **S16 整条记录被换成了第十七期的内容**（标题、日期、名额全变了）。
-
-    这是纪律问题不是语义问题，所以由代码判定：
-    抽到的期次和当前期次不一致，一律不写，让模型去告诉客服。
-    没有任何情况需要「在 S16 里写第十七期」——真要新建，那是 create_activity 的事。
-    """
-    got = _session_no(updates.get("session_label"))
-    cur = _session_no(activity_id)
-    if got and cur and got != cur:
-        return (f"这段内容写的是第{got}期，但当前正在编辑的是第{cur}期，"
-                f"已拒绝写入。要新建一期请用新建功能，不要覆盖现有期次。")
-    return None
-
-
 def answer_chat(
     question: str,
     activity_id: Optional[str] = None,
@@ -517,6 +497,9 @@ def answer_chat(
     verbose: bool = False,
 ) -> Dict[str, Any]:
     """所有输入走对话框。
+
+    存储模型是**单活动**：永远只有「当前这一期」，办完覆盖成新的一期。
+    所以这里不需要任何期次判断——activity_id 只是为了兼容调用方。
 
     流程：
         ① 模型判断这是「补充信息」还是「提问」（classify_input）
@@ -537,16 +520,6 @@ def answer_chat(
         good, bad = _valid_updates(decided["updates"])
         if verbose:
             print(f"  📝 抽到的字段：{good}   被拒：{bad}")
-
-        # 纪律检查：别期的内容不许写进这一期
-        crossed = _cross_session_guard(good, aid)
-        if crossed:
-            if verbose:
-                print(f"  🛑 跨期拦截：{crossed}")
-            out = _confirm_written(question, good, aid, False, crossed)
-            out["wrote"], out["write_errors"] = [], [crossed]
-            out["missing"] = []
-            return out
 
         if not good:
             out = _answer_context(question, aid, history)

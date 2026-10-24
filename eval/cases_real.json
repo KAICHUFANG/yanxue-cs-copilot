@@ -225,20 +225,6 @@
    "source": "模拟家长问法（无期次）"
   },
   {
-   "id": "R04",
-   "category": "活动列表",
-   "q": "你们办过哪些活动",
-   "expect_tool": null,
-   "must_contain": [
-    "第十六期",
-    "第六期"
-   ],
-   "must_contain_any": [
-    "期"
-   ],
-   "source": "模拟家长问法（无期次）"
-  },
-  {
    "id": "R05",
    "category": "通用规则",
    "q": "要下大雨了，活动能继续吗",

@@ -1,234 +1,323 @@
 {
-  "meta": {
-    "title": "山海科普客服助手 · 评测用例",
-    "version": "1.0",
-    "created": "2026-10-22",
-    "note": "问题取材于真实家长提问（已脱敏：去掉孩子姓名、手机号、学校名）。三类拒答题用来检验「不知道就说不知道」这条底线。",
-    "grading_dimensions": {
-      "tool_ok": "期望的工具是否被调用（选错工具 = 答案来源就错了）",
-      "facts_ok": "答案里必须出现的关键事实是否齐全",
-      "any_ok": "多个正确说法里至少命中一个（避免因措辞差异误判）",
-      "clean_ok": "是否出现不该出现的内容（别的期次的数据、错误口径）"
-    },
-    "pass_rule": "四项全部通过才算通过",
-    "safety": "运行时会把 activities.json 复制到 eval/tmp_activities.json，所有写入类用例只改副本，不动真实知识库"
+ "meta": {
+  "title": "山海科普客服助手 · 评测用例",
+  "version": "1.0",
+  "created": "2026-10-22",
+  "note": "问题取材于真实家长提问（已脱敏：去掉孩子姓名、手机号、学校名）。三类拒答题用来检验「不知道就说不知道」这条底线。",
+  "grading_dimensions": {
+   "tool_ok": "期望的工具是否被调用（选错工具 = 答案来源就错了）",
+   "facts_ok": "答案里必须出现的关键事实是否齐全",
+   "any_ok": "多个正确说法里至少命中一个（避免因措辞差异误判）",
+   "clean_ok": "是否出现不该出现的内容（别的期次的数据、错误口径）"
   },
-
-  "cases": [
-    {
-      "id": "Q01", "category": "单期查询",
-      "q": "第十六期多少钱啊",
-      "expect_tool": "get_activity",
-      "must_contain": ["88", "78", "68"],
-      "must_not_contain": ["138"]
-    },
-    {
-      "id": "Q02", "category": "单期查询",
-      "q": "几年级能参加",
-      "expect_tool": "get_activity",
-      "must_contain": ["4", "6"],
-      "must_contain_any": ["年级"]
-    },
-    {
-      "id": "Q03", "category": "单期查询",
-      "q": "名额还有多少",
-      "expect_tool": "get_activity",
-      "must_contain": ["25"],
-      "must_not_contain": ["18人", "18 人"]
-    },
-    {
-      "id": "Q04", "category": "单期查询",
-      "q": "第十六期是什么时候",
-      "expect_tool": "get_activity",
-      "must_contain": ["10", "24"],
-      "must_contain_any": ["周六", "星期六"]
-    },
-
-    {
-      "id": "Q05", "category": "多期对比",
-      "q": "第六期和第十六期分别多少钱",
-      "expect_tool": "get_activity",
-      "must_contain": ["138", "88"],
-      "must_contain_any": ["不一样", "不同", "分别"]
-    },
-    {
-      "id": "Q06", "category": "多期对比",
-      "q": "第六期和第十六期名额一样吗",
-      "expect_tool": "get_activity",
-      "must_contain": ["18", "25"]
-    },
-
-    {
-      "id": "Q07", "category": "活动列表",
-      "q": "最近有什么活动可以报名",
-      "expect_tool": "list_activities",
-      "must_contain": ["第十六期"],
-      "must_contain_any": ["报名"]
-    },
-    {
-      "id": "Q08", "category": "活动列表",
-      "q": "你们办过哪些活动",
-      "expect_tool": "list_activities",
-      "must_contain": ["第十六期", "第六期"],
-      "must_contain_any": ["期"]
-    },
-
-    {
-      "id": "Q09", "category": "通用规则",
-      "q": "要下大雨了，活动能继续吗",
-      "expect_tool": "get_policies",
-      "must_contain": ["室内"],
-      "must_contain_any": ["取消", "照常", "备用"]
-    },
-    {
-      "id": "Q10", "category": "通用规则",
-      "q": "能晚点到吗，路上堵车",
-      "expect_tool": "get_policies",
-      "must_contain": [],
-      "must_contain_any": ["准时", "不等"],
-      "must_not_contain": ["不能参加", "无法入场", "迟到不能进", "不接受迟到"]
-    },
-    {
-      "id": "Q11", "category": "通用规则",
-      "q": "家长要陪同吗",
-      "expect_tool": "get_policies",
-      "must_contain": [],
-      "must_contain_any": ["不需要", "默认不", "不用陪", "不陪同", "独立参加"],
-      "must_not_contain": ["必须陪同", "一定要陪"]
-    },
-    {
-      "id": "Q12", "category": "通用规则",
-      "q": "要自己带什么东西",
-      "expect_tool": "get_policies",
-      "must_contain": ["水杯"]
-    },
-
-    {
-      "id": "Q13", "category": "进校流程",
-      "q": "怎么预约进校",
-      "expect_tool": "get_campus_booking_flow",
-      "must_contain": ["海南大学", "公众号"],
-      "must_contain_any": ["访客预约", "私信"]
-    },
-    {
-      "id": "Q14", "category": "进校流程",
-      "q": "是不是只能从北门进出，西门能不能走",
-      "expect_tool": "get_campus_booking_flow",
-      "must_contain": ["北门", "西门"],
-      "must_not_contain": ["所有门都可以", "所有门都能走"]
-    },
-    {
-      "id": "Q15", "category": "进校流程",
-      "q": "孩子不用预约吧",
-      "expect_tool": "get_campus_booking_flow",
-      "must_contain": [],
-      "must_contain_any": ["不用", "不需要"],
-      "must_not_contain": ["每个孩子都要预约", "孩子也要预约"]
-    },
-    {
-      "id": "Q16", "category": "进校流程",
-      "q": "需要带身份证吗，我看要填身份证号",
-      "expect_tool": "get_campus_booking_flow",
-      "must_contain": [],
-      "must_contain_any": ["不需要", "不用"]
-    },
-    {
-      "id": "Q17", "category": "进校流程",
-      "q": "预约一直显示待审核怎么办",
-      "expect_tool": "get_campus_booking_flow",
-      "must_contain": [],
-      "must_contain_any": ["稍", "推送", "催", "审核"]
-    },
-
-    {
-      "id": "Q18", "category": "文案生成",
-      "q": "帮我写第十六期活动群文案",
-      "expect_tool": "render_group_messages",
-      "must_contain": ["山海科普", "自贸港小商人"],
-      "must_not_contain": ["山海研学", "{{活动名}}"]
-    },
-    {
-      "id": "Q19", "category": "文案生成",
-      "q": "写个第十六期的活动提醒",
-      "expect_tool": "render_group_messages",
-      "must_contain": ["山海科普"],
-      "must_contain_any": ["集合", "提醒"]
-    },
-    {
-      "id": "Q20", "category": "文案生成",
-      "q": "第十六期还缺什么信息",
-      "expect_tool": "check_missing_info",
-      "must_contain": [],
-      "must_contain_any": ["集合地点", "集合时间"]
-    },
-
-    {
-      "id": "Q21", "category": "信息录入",
-      "q": "第十六期集合时间是14:40，集合地点在海南大学北门",
-      "expect_tool": "update_activity",
-      "must_contain": [],
-      "must_contain_any": ["记录", "已", "写入"]
-    },
-    {
-      "id": "Q22", "category": "信息录入",
-      "q": "第十六期每组大概4到5个孩子",
-      "expect_tool": "update_activity",
-      "must_contain": [],
-      "must_contain_any": ["记录", "已", "写入"]
-    },
-    {
-      "id": "Q23", "category": "信息录入",
-      "q": "第十六期是室外活动",
-      "expect_tool": "update_activity",
-      "must_contain": [],
-      "must_contain_any": ["记录", "已", "写入"]
-    },
-
-    {
-      "id": "Q24", "category": "拒答",
-      "q": "第二期是什么活动",
-      "expect_tool": "get_activity",
-      "must_contain": [],
-      "must_contain_any": ["没有", "未收录", "查不到", "没记录"],
-      "expect_refusal": true,
-      "must_not_contain": ["母亲节", "协同创新", "攀树", "自贸港"]
-    },
-    {
-      "id": "Q25", "category": "拒答",
-      "q": "第五期多少钱",
-      "expect_tool": "get_activity",
-      "must_contain": [],
-      "must_contain_any": ["没有", "未收录", "查不到", "没记录"],
-      "expect_refusal": true,
-      "must_not_contain": ["88", "138"]
-    },
-    {
-      "id": "Q26", "category": "拒答",
-      "q": "第十期怎么报名",
-      "expect_tool": "get_activity",
-      "must_contain": [],
-      "must_contain_any": ["没有", "未收录", "查不到", "没记录"],
-      "expect_refusal": true,
-      "must_not_contain": ["扫码", "二维码"]
-    },
-
-    {
-      "id": "Q27", "category": "编造检测",
-      "q": "第十六期请的是哪个老师带队",
-      "expect_tool": null,
-      "must_contain": [],
-      "must_contain_any": ["没有", "不清楚", "未", "负责人"],
-      "must_not_contain": ["老师姓", "由张", "由李", "由王"]
-    },
-    {
-      "id": "Q28", "category": "编造检测",
-      "q": "第十六期有多少个孩子已经报名了",
-      "expect_tool": null,
-      "must_contain": [],
-      "must_contain_any": ["没有", "不清楚", "无法", "不知道", "未"],
-      "must_not_contain": [],
-      "must_not_match": ["已报(名)?\\s*\\d+", "报了\\s*\\d+\\s*个", "目前有\\s*\\d+"],
-      "_note": "用正则而不是固定词：答「没有『已经报了』的人数」是正确行为，不该判倒；真正编造是给出具体数字。"
-    }
-  ]
+  "pass_rule": "四项全部通过才算通过",
+  "safety": "运行时会把 activities.json 复制到 eval/tmp_activities.json，所有写入类用例只改副本，不动真实知识库"
+ },
+ "cases": [
+  {
+   "id": "Q01",
+   "category": "单期查询",
+   "q": "第十六期多少钱啊",
+   "expect_tool": "get_activity",
+   "must_contain": [
+    "88",
+    "78",
+    "68"
+   ],
+   "must_not_contain": [
+    "138"
+   ]
+  },
+  {
+   "id": "Q02",
+   "category": "单期查询",
+   "q": "几年级能参加",
+   "expect_tool": "get_activity",
+   "must_contain": [
+    "4",
+    "6"
+   ],
+   "must_contain_any": [
+    "年级"
+   ]
+  },
+  {
+   "id": "Q03",
+   "category": "单期查询",
+   "q": "名额还有多少",
+   "expect_tool": "get_activity",
+   "must_contain": [
+    "25"
+   ],
+   "must_not_contain": [
+    "18人",
+    "18 人"
+   ]
+  },
+  {
+   "id": "Q04",
+   "category": "单期查询",
+   "q": "第十六期是什么时候",
+   "expect_tool": "get_activity",
+   "must_contain": [
+    "10",
+    "24"
+   ],
+   "must_contain_any": [
+    "周六",
+    "星期六"
+   ]
+  },
+  {
+   "id": "Q07",
+   "category": "活动列表",
+   "q": "最近有什么活动可以报名",
+   "expect_tool": "list_activities",
+   "must_contain": [
+    "第十六期"
+   ],
+   "must_contain_any": [
+    "报名"
+   ]
+  },
+  {
+   "id": "Q09",
+   "category": "通用规则",
+   "q": "要下大雨了，活动能继续吗",
+   "expect_tool": "get_policies",
+   "must_contain": [
+    "室内"
+   ],
+   "must_contain_any": [
+    "取消",
+    "照常",
+    "备用"
+   ]
+  },
+  {
+   "id": "Q10",
+   "category": "通用规则",
+   "q": "能晚点到吗，路上堵车",
+   "expect_tool": "get_policies",
+   "must_contain": [],
+   "must_contain_any": [
+    "准时",
+    "不等"
+   ],
+   "must_not_contain": [
+    "不能参加",
+    "无法入场",
+    "迟到不能进",
+    "不接受迟到"
+   ]
+  },
+  {
+   "id": "Q11",
+   "category": "通用规则",
+   "q": "家长要陪同吗",
+   "expect_tool": "get_policies",
+   "must_contain": [],
+   "must_contain_any": [
+    "不需要",
+    "默认不",
+    "不用陪",
+    "不陪同",
+    "独立参加"
+   ],
+   "must_not_contain": [
+    "必须陪同",
+    "一定要陪"
+   ]
+  },
+  {
+   "id": "Q12",
+   "category": "通用规则",
+   "q": "要自己带什么东西",
+   "expect_tool": "get_policies",
+   "must_contain": [
+    "水杯"
+   ]
+  },
+  {
+   "id": "Q13",
+   "category": "进校流程",
+   "q": "怎么预约进校",
+   "expect_tool": "get_campus_booking_flow",
+   "must_contain": [
+    "海南大学",
+    "公众号"
+   ],
+   "must_contain_any": [
+    "访客预约",
+    "私信"
+   ]
+  },
+  {
+   "id": "Q14",
+   "category": "进校流程",
+   "q": "是不是只能从北门进出，西门能不能走",
+   "expect_tool": "get_campus_booking_flow",
+   "must_contain": [
+    "北门",
+    "西门"
+   ],
+   "must_not_contain": [
+    "所有门都可以",
+    "所有门都能走"
+   ]
+  },
+  {
+   "id": "Q15",
+   "category": "进校流程",
+   "q": "孩子不用预约吧",
+   "expect_tool": "get_campus_booking_flow",
+   "must_contain": [],
+   "must_contain_any": [
+    "不用",
+    "不需要"
+   ],
+   "must_not_contain": [
+    "每个孩子都要预约",
+    "孩子也要预约"
+   ]
+  },
+  {
+   "id": "Q16",
+   "category": "进校流程",
+   "q": "需要带身份证吗，我看要填身份证号",
+   "expect_tool": "get_campus_booking_flow",
+   "must_contain": [],
+   "must_contain_any": [
+    "不需要",
+    "不用"
+   ]
+  },
+  {
+   "id": "Q17",
+   "category": "进校流程",
+   "q": "预约一直显示待审核怎么办",
+   "expect_tool": "get_campus_booking_flow",
+   "must_contain": [],
+   "must_contain_any": [
+    "稍",
+    "推送",
+    "催",
+    "审核"
+   ]
+  },
+  {
+   "id": "Q18",
+   "category": "文案生成",
+   "q": "帮我写第十六期活动群文案",
+   "expect_tool": "render_group_messages",
+   "must_contain": [
+    "山海科普",
+    "自贸港小商人"
+   ],
+   "must_not_contain": [
+    "山海研学",
+    "{{活动名}}"
+   ]
+  },
+  {
+   "id": "Q19",
+   "category": "文案生成",
+   "q": "写个第十六期的活动提醒",
+   "expect_tool": "render_group_messages",
+   "must_contain": [
+    "山海科普"
+   ],
+   "must_contain_any": [
+    "集合",
+    "提醒"
+   ]
+  },
+  {
+   "id": "Q20",
+   "category": "文案生成",
+   "q": "第十六期还缺什么信息",
+   "expect_tool": "check_missing_info",
+   "must_contain": [],
+   "must_contain_any": [
+    "集合地点",
+    "集合时间"
+   ]
+  },
+  {
+   "id": "Q21",
+   "category": "信息录入",
+   "q": "第十六期集合时间是14:40，集合地点在海南大学北门",
+   "expect_tool": "update_activity",
+   "must_contain": [],
+   "must_contain_any": [
+    "记录",
+    "已",
+    "写入"
+   ]
+  },
+  {
+   "id": "Q22",
+   "category": "信息录入",
+   "q": "第十六期每组大概4到5个孩子",
+   "expect_tool": "update_activity",
+   "must_contain": [],
+   "must_contain_any": [
+    "记录",
+    "已",
+    "写入"
+   ]
+  },
+  {
+   "id": "Q23",
+   "category": "信息录入",
+   "q": "第十六期是室外活动",
+   "expect_tool": "update_activity",
+   "must_contain": [],
+   "must_contain_any": [
+    "记录",
+    "已",
+    "写入"
+   ]
+  },
+  {
+   "id": "Q27",
+   "category": "编造检测",
+   "q": "第十六期请的是哪个老师带队",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "没有",
+    "不清楚",
+    "未",
+    "负责人"
+   ],
+   "must_not_contain": [
+    "老师姓",
+    "由张",
+    "由李",
+    "由王"
+   ]
+  },
+  {
+   "id": "Q28",
+   "category": "编造检测",
+   "q": "第十六期有多少个孩子已经报名了",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "没有",
+    "不清楚",
+    "无法",
+    "不知道",
+    "未"
+   ],
+   "must_not_contain": [],
+   "must_not_match": [
+    "已报(名)?\\s*\\d+",
+    "报了\\s*\\d+\\s*个",
+    "目前有\\s*\\d+"
+   ],
+   "_note": "用正则而不是固定词：答「没有『已经报了』的人数」是正确行为，不该判倒；真正编造是给出具体数字。"
+  }
+ ]
 }
