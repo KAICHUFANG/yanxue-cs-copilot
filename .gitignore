@@ -19,8 +19,6 @@ outputs/
 data/backups/
 
 # ---- 评测产物（可重新生成，不进仓库）----
-eval/tmp_activities.json
-eval/tmp_activities_ab.json
 eval/report.json
 eval/ab_report.json
 eval/backups/
@@ -32,8 +30,5 @@ eval/backups/
 Thumbs.db
 desktop.ini
 eval/ab_real_report.json
-eval/tmp_activities_real.json
 eval/ab_v4_report.json
-eval/tmp_activities_hard.json
-eval/tmp_smoke.json
-eval/tmp_v5.json
+eval/tmp_*.json

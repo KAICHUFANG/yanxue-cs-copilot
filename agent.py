@@ -272,3 +272,136 @@ def answer_ctx(
             "total_tokens": getattr(u, "total_tokens", 0) or 0,
         },
     }
+
+
+# ============================================================================
+# v6：对话输入版（所有输入都走对话框，但带一个"写入"工具）
+# ============================================================================
+#
+# 为什么和 v3 不同：
+#   v3 假设「写入走界面按钮」，所以它没有工具，纯粹读资料答问题。
+#   但产品决定是「全部输入都走对话框」——客服不学表单，想到什么就说什么。
+#
+#   于是「这是录入还是提问」这个判断又回来了。区别是这次的兜底不是靠猜准，
+#   而是靠**结果可见**：
+#       · 写库仍然过 store.update_activity（白名单 + 类型校验 + 写前备份）
+#       · 写完立刻返回「改了哪几项、还缺什么」
+#       · 界面上有一块只读状态面板，写完当场刷新
+#   写错了立刻看得见，也能从 data/backups/ 回滚。不要求模型 100% 判断对。
+#
+#   工具只有一个（update_activity）。读不需要工具——整份资料已经在上下文里了。
+
+_WRITE_HINT = """
+## 客服在对话里补充活动信息时（重要）
+客服会陆续告诉你活动信息（时间、集合地点、价格、名额、是否室外、分组等），
+或者粘贴整篇推文让你录入。
+
+这种情况**必须调用 update_activity 真正写入**，不能只在回复里说「记住了」——那样等于没记。
+
+· 只写客服明确说过的字段，没说的不要猜，尤其不要填「校门口」「上午」这种像模像样的默认值
+· 写完把结果告诉客服：改了哪几项、这一期还缺什么
+· 写不进去（格式错、字段不允许）就如实转告，不要换个说法糊过去
+· 如果客服这句话只是在问问题（不是补充信息），正常回答就行，不要调工具
+"""
+
+
+def _write_tool_schema() -> list:
+    """只要 update_activity 这一个工具。"""
+    for s in tools.SCHEMAS:
+        if s["function"]["name"] == "update_activity":
+            return [s]
+    return []
+
+
+def answer_chat(
+    question: str,
+    activity_id: Optional[str] = None,
+    history: Optional[List[Dict[str, Any]]] = None,
+    verbose: bool = False,
+) -> Dict[str, Any]:
+    """v6：全部输入走对话框。读=直接答，写=调 update_activity。
+
+    返回里除了 answer，还有：
+        wrote   这次写了哪几个字段（空列表 = 没写）
+        trace   实际调用的工具
+        missing 写完之后这一期还缺什么
+    """
+    import knowledge
+
+    ctx = knowledge.build_context(activity_id)
+    sys_msg = _CTX_SYSTEM + "\n\n" + ctx + "\n\n" + _WRITE_HINT
+
+    msgs: List[Dict[str, Any]] = [{"role": "system", "content": sys_msg}]
+    for m in (history or [])[-6:]:
+        if m.get("role") in ("user", "assistant") and m.get("content"):
+            msgs.append({"role": m["role"], "content": m["content"]})
+    msgs.append({"role": "user", "content": question})
+
+    tool_msgs = _write_tool_schema()
+    pt = ct = 0
+    trace: List[str] = []
+    wrote: List[str] = []
+
+    for round_no in range(3):
+        kwargs: Dict[str, Any] = {
+            "model": config.MODEL,
+            "messages": msgs,
+            "temperature": config.TEMPERATURE,
+        }
+        if tool_msgs:
+            kwargs["tools"] = tool_msgs
+            kwargs["tool_choice"] = "auto"
+
+        resp = _client.chat.completions.create(**kwargs)
+        if resp.usage:
+            pt += resp.usage.prompt_tokens or 0
+            ct += resp.usage.completion_tokens or 0
+        msg = resp.choices[0].message
+
+        if not msg.tool_calls:
+            answer = msg.content or ""
+            msgs.append({"role": "assistant", "content": answer})
+            break
+
+        msgs.append({
+            "role": "assistant",
+            "content": msg.content or "",
+            "tool_calls": [
+                {"id": tc.id, "type": "function",
+                 "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                for tc in msg.tool_calls
+            ],
+        })
+        for tc in msg.tool_calls:
+            result = tools.call_tool(tc.function.name, tc.function.arguments)
+            trace.append(tc.function.name)
+            # 从参数里捞出这次写了哪些字段，供界面刷新状态
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+                wrote.extend((args.get("updates") or {}).keys())
+            except Exception:
+                pass
+            if verbose:
+                print(f"  🔧 {tc.function.name} → {str(result)[:120]}")
+            msgs.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+    else:
+        answer = "（抱歉，我没能在限定轮次内给出结果，请换个说法再试一次）"
+
+    # 写没写成功，以磁盘上的实际情况为准，不看模型怎么说
+    missing: List[Dict[str, str]] = []
+    if wrote:
+        try:
+            import store
+            act = knowledge.get_activity(activity_id)
+            if act:
+                missing = store.missing_fields(act)
+        except Exception:
+            pass
+
+    return {
+        "answer": answer,
+        "trace": trace or ["<context>"],
+        "wrote": sorted(set(wrote)),
+        "missing": missing,
+        "usage": {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct},
+    }
