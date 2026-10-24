@@ -35,7 +35,11 @@ PROJ = EVAL_DIR.parent
 TMP_KB = EVAL_DIR / "tmp_activities_ab.json"
 
 # ---- 必须在 import config 之前设置，理由同 run_eval.py ----
-shutil.copy2(PROJ / "data" / "activities.json", TMP_KB)
+# 评测固定用 eval/fixtures 里的题库快照，不直接吃真实业务数据——
+# 否则客服今天填一个集合地点，昨天的评测结论就作废（踩过）。
+_FIXTURE = EVAL_DIR / "fixtures" / "activities_fixture.json"
+_SRC = _FIXTURE if _FIXTURE.exists() else PROJ / "data" / "activities.json"
+shutil.copy2(_SRC, TMP_KB)
 os.environ["ACTIVITIES_FILE"] = str(TMP_KB)
 os.environ.setdefault("TEMPERATURE", "0")
 

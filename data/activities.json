@@ -169,7 +169,7 @@
       "target_audience": "小学 4-6 年级学生",
       "participant_format": "学生独立参加，家长一般不陪同",
       "_participant_format_source": "2026-10-21 用户口头确认（原文未写明）",
-      "indoor_outdoor": null,
+      "indoor_outdoor": "室内",
       "_indoor_outdoor_note": "推文未写，家长必问，需向活动负责人确认",
       "grouping": "分组活动",
       "_grouping_note": "推文提到「分组扮演五类小商人」，但未说明是否固定分组、家长是否需要分组，需确认",
@@ -261,7 +261,7 @@
         "最少成行人数",
         "着装要求（原文未提）"
       ],
-      "_last_updated": "2026-10-24 19:02"
+      "_last_updated": "2026-10-24 19:11"
     },
     {
       "id": "S06",

@@ -366,6 +366,24 @@ def _pure_enum(text: str):
 # 这条规则是为了兼容客服直接照着面板字段名抄「室内还是室外」的习惯。
 _ENUM_WORDS = ["室外", "室内", "不分组", "分组", "已结束", "报名中", "待确认"]
 
+# 「这到底是不是一个真问题」的强信号。注意刻意不含「还是」——
+# 「室内还是室外」是客服照抄字段名，不是家长在提问。
+_STRONG_QUESTION = ["吗", "呢", "？", "?", "怎么", "如何", "多少", "几个", "哪里",
+                    "哪个", "哪期", "是否", "能不能", "可不可以", "有没有"]
+
+# 虚词：剔掉字段词之后如果只剩这些，说明客服只是在报字段名
+_FILLER = set(" 的了啊吧哦呢呀嘛，。！？?、：:；;这期本那是个一和或都还活动")
+
+
+def _is_field_only(raw: str) -> bool:
+    """判断是不是「只报了字段名、没给值」。"""
+    if any(h in raw for h in _STRONG_QUESTION):
+        return False
+    rest = raw
+    for w in ("室内", "室外", "分组"):
+        rest = rest.replace(w, "")
+    return all(ch in _FILLER for ch in rest)
+
 
 def _enum_probe(text: str):
     """返回 (字段, 值)。值是 None 表示「只说了字段名，没给值，应该反问」。"""
@@ -395,9 +413,18 @@ def _enum_probe(text: str):
             return _ENUM_MAP[word]
 
     # ④ 只提到字段名，没给值
-    if "室内" in raw or "室外" in raw:
-        return ("indoor_outdoor", None)
-    if "分组" in raw:
+    #
+    # 这条规则一开始写成了「句子里出现『室内』就算」，结果把家长的正常提问
+    # 全拦下来了：「室内有空调吗」「下雨了会转室内吗」「分组后孩子会分开吗」
+    # 都被回应成「这期是室内还是室外？说一个词就行」——家长会当场懵。
+    # 这就是旧关键词路由的同一个病：只看词出没出现，不看它在句子里干什么。
+    #
+    # 改法：把字段词剔掉之后，剩下的必须**全是虚词**才算「只报了字段名」。
+    #   「室内还是室外」      → 剩「还是」→ 全虚词 → 只报字段名 ✓
+    #   「室内有空调吗」      → 剩「有空调」+ 有「吗」→ 不是 ✓
+    if _is_field_only(raw):
+        if "室内" in raw or "室外" in raw:
+            return ("indoor_outdoor", None)
         return ("grouping", None)
     return None
 
