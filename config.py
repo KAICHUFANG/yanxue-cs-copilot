@@ -22,8 +22,12 @@ BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
 MODEL = os.getenv("MODEL_NAME", "deepseek-chat").strip()
 
 # ---- 数据 ----
-# 允许用环境变量指向别的数据文件：跑测试时指向副本，避免把测试数据写进真实知识库
-DATA_FILE = Path(os.getenv("ACTIVITIES_FILE", ROOT / "data" / "activities.json"))
+# DATA_DIR 固定指向项目的 data 目录：processes.json / group_messages.json 都在这里。
+# DATA_FILE 允许用环境变量覆盖（评测时指向副本），但**只影响活动数据本身**，
+# 不能连带把 processes.json 的路径也带跑——这个坑踩过：评测时指向 eval/ 目录，
+# 结果找不到 processes.json，模型只能回答「查不到记录」。
+DATA_DIR = ROOT / "data"
+DATA_FILE = Path(os.getenv("ACTIVITIES_FILE", DATA_DIR / "activities.json"))
 
 # ---- 运行参数 ----
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))

@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import config
 
-DATA_DIR = Path(config.DATA_FILE).parent
+DATA_DIR = Path(config.DATA_DIR)
 BACKUP_DIR = DATA_DIR / "backups"
 
 # 允许客服更新的字段（白名单）。不在表里的键会被拒绝，防止模型乱写。

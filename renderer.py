@@ -126,6 +126,27 @@ def render_text(
     }
 
 
+def _load_processes() -> Dict[str, Any]:
+    path = config.DATA_DIR / "processes.json"
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _resolve_ref(ref: str) -> str:
+    """解析形如 "campus_booking.entry_gate.ready_to_send_text" 的引用。
+
+    为什么要引用而不是复制：门禁提醒这类定稿只应存在一处。
+    复制到两个文件里，改了一处忘了另一处，就会出现「群文案说得跟流程不一样」。
+    """
+    try:
+        node: Any = _load_processes()
+        for part in ref.split("."):
+            node = node[part]
+        return node if isinstance(node, str) else json.dumps(node, ensure_ascii=False)
+    except Exception:
+        return f"【未能解析引用：{ref}】"
+
+
 def render_group_messages(
     activity_id: str,
     stage: Optional[str] = None,
@@ -140,7 +161,7 @@ def render_group_messages(
             ensure_ascii=False,
         )
 
-    path = config.DATA_FILE.parent / "group_messages.json"
+    path = config.DATA_DIR / "group_messages.json"
     with open(path, encoding="utf-8") as f:
         book = json.load(f)
 
@@ -170,6 +191,20 @@ def render_group_messages(
                     "manual": True,
                     "action": msg.get("content_note") or msg.get("text"),
                     "source": msg.get("source"),
+                })
+                continue
+
+            if msg.get("type") == "reference":
+                ref = msg.get("ref", "")
+                resolved = _resolve_ref(ref)
+                out.append({
+                    "stage": st["stage"],
+                    "label": msg["label"],
+                    "source": msg.get("source"),
+                    "text": resolved,
+                    "ready": not resolved.startswith("【未能解析"),
+                    "unfilled": [],
+                    "from_ref": ref,
                 })
                 continue
 

@@ -159,7 +159,7 @@ def check_missing_info(activity_id: str = "") -> str:
 
 # ---------------------------------------------------------------- 流程类（SOP）
 def _load_processes() -> Dict[str, Any]:
-    path = config.DATA_FILE.parent / "processes.json"
+    path = config.DATA_DIR / "processes.json"
     with open(path, encoding="utf-8") as f:
         return json.load(f)
 
@@ -325,7 +325,9 @@ _DISPATCH = {
     "get_campus_booking_flow": get_campus_booking_flow,
     "check_missing_info": check_missing_info,
     "render_group_messages": lambda activity_id, stage=None: renderer.render_group_messages(activity_id, stage),
-    "update_activity": store.update_activity,
+    "update_activity": lambda activity_id, updates: json.dumps(
+        store.update_activity(activity_id, updates), ensure_ascii=False
+    ),
 }
 
 
