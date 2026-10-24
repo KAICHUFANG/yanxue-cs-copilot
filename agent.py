@@ -1,4 +1,4 @@
-﻿"""
+"""
 Agent：一句话进来 → 判断是「补充信息 / 要文案 / 提问」→ 执行 → 一句人话出去
 
 存储模型是**单活动**：永远只有「当前正在办的那一期」，办完覆盖成新的一期。
@@ -98,8 +98,11 @@ _CLASSIFY_SYSTEM = """你是客服助手的输入判断器。判断客服这句�
 A. update —— 在补充或修改当前活动的信息
    例：「室外」「不分组」「这期是室外活动」「集合点改到五教104」「每组4到5人」
        「不是室内，是室外」「室内还是室外：室外」「名额改成30人」
-B. copy —— 要一段可以直接发群的文案
-   例：「帮我写活动群文案」「写个活动提醒」「生成欢迎语」「再来一版结束感谢」
+B. copy —— 要一段可以直接发出去的文案。要再分两类：
+   B1. copy_type = "template"：活动群通知类文案（欢迎语、进校预约提醒、活动提醒、出发提醒、结束感谢）
+       —— 这些有定稿模板，stage 填是哪一种
+   B2. copy_type = "promo"：推广/招募类文案（发到别的群拉人报名、朋友圈、朋友推荐）
+       —— 这些没有定稿，需要现写
 C. question —— 在问问题
    例：「室内有空调吗」「几点集合」「这次活动是不是室内的」「报名怎么弄」
 
@@ -107,6 +110,10 @@ C. question —— 在问问题
 · 只给了一个词或一个值、没有疑问语气 → update
 · 有否定或条件时，先正确理解含义再定值：
   「不是室内」→ 室外；「如果下雨就转室内」→ 这不是在改活动属性，按 question 处理
+· 「推广」「招募」「拉人」「朋友圈」「引流」「私域」→ 一律 copy + promo
+· 「欢迎语」「群公告」「活动提醒」「结束感谢」→ copy + template
+· 只说「写个文案」「来段文案」而没说清是活动群通知还是推广 → copy，但 **copy_type 留空**，
+  让程序去反问客服，不要替她猜
 · 拿不准的时候选 question（宁可多问一句，也不要乱写库）
 · 只抽客服**明确说过**的字段，没说的一律不要填，不要编「校门口」「上午」这种默认值
 
@@ -120,7 +127,7 @@ __FIELDS__
 · 其余是字符串
 
 只输出 JSON：
-{"kind": "update" | "copy" | "question", "updates": {字段: 值}, "stage": "文案阶段（仅 copy 时填，如 欢迎语/活动提醒/结束感谢）", "reason": "一句话说明依据"}
+{"kind": "update" | "copy" | "question", "copy_type": "template" | "promo"（仅 copy 时用）, "stage": "欢迎语/活动提醒/出发提醒/结束感谢（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
 """
 
 # 文案阶段 → group_messages.json 里 timeline 的圈号。
@@ -165,8 +172,12 @@ def classify_input(question: str, activity_id: Optional[str] = None) -> Dict[str
     kind = data.get("kind")
     if kind not in ("update", "copy", "question"):
         kind = "question"          # 判不出来就当提问，绝不瞎写
+    copy_type = data.get("copy_type")
+    if copy_type not in ("template", "promo"):
+        copy_type = ""
     return {
         "kind": kind,
+        "copy_type": copy_type,
         "updates": data.get("updates") if isinstance(data.get("updates"), dict) else {},
         "stage": data.get("stage") or "",
         "reason": data.get("reason", ""),
@@ -220,17 +231,24 @@ def write_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------- 文案
-def render_copy(stage_text: str) -> str:
+def render_copy(stage_text: str, all_when_empty: bool = True) -> str:
     """按阶段渲染群文案。模板里的 {{占位符}} 由代码填，保证原文输出。
 
     渲染器返回的是 JSON（给程序用），这里格式化成客服能直接复制发群的文本。
     格式化这一步也必须由代码做：让模型去「排版」就等于把定稿交给它改写。
+
+    all_when_empty：认不出阶段时，是否把 5 个阶段全部输出。
+        界面的「生成全部群文案」按钮传 True（它就是要全部）；
+        对话框路径必须传 False —— 否则「写推广文案」会被渲染成「欢迎语」，
+        因为 stage=None 时渲染器从第一个阶段开始输出。这是真实报过的 bug。
     """
     key = None
     for word, no in _STAGE_HINT:
         if word in (stage_text or ""):
             key = no
             break
+    if key is None and not all_when_empty:
+        return ""
 
     raw = renderer.render_group_messages(knowledge.current_activity_id(), stage=key)
     try:
@@ -248,7 +266,7 @@ def render_copy(stage_text: str) -> str:
         elif m.get("manual"):
             lines.append(f"【需要你手动发】{m.get('label', '')}：{m.get('action', '')}")
     if not lines:
-        return "这一阶段暂时没有可发的文案。"
+        return ""
 
     out = "\n\n————\n\n".join(lines)
     left = data.get("unfilled_summary") or []
@@ -257,21 +275,46 @@ def render_copy(stage_text: str) -> str:
     return out
 
 
-# ---------------------------------------------------------------- 给客服的内部提示
-# 这一层不发给家长，所以不受「150 字、口语化」的限制。
-# 它的价值：把「我不知道」变成「你该怎么做」——查不到的那几项该问谁、这条回复有什么风险。
-_INTERNAL_SYSTEM = """你在给客服写内部备注，这段**不会发给家长**。
+# 活动群那 5 个阶段，认不出来时拿它反问客服
+STAGE_NAMES = "① 拉群欢迎语　② 进校预约提醒　③ 活动提醒（含集合点）　④ 出发提醒　⑤ 结束感谢"
 
-基于资料和这次的回复，写 2-4 条给客服的提示，每条一行，只在确实需要时写：
-- 资料里缺哪一项、建议现在去问谁（负责人 / 策划组 / 老师）
-- 这条回复有没有风险（承诺过头、可能被追问、口径不确定）
-- 家长情绪如何，要不要打个电话
-- 下一步该做什么
+# 推广文案：这类不是定稿，本来就是要「写」，所以交给模型。
+# 但事实必须来自资料——不能让模型自己编优惠、编名额紧张。
+_PROMO_SYSTEM = """你在给「山海科普研学」写**私域群推广文案**：发到别的家长群或朋友圈，
+目的是吸引家长报名参加这一期活动。
 
-要求：具体、可执行、短。不要复述已经答过的事实。不要写「建议保持专业」这种空话。
-如果没有需要提醒的，直接输出空字符串。
+事实只能用【资料】里有的：活动名、主题、时间、地点、招募对象、名额、价格、费用包含、活动环节与亮点。
 
-只输出 JSON：{"notes": ["...", "..."]}"""
+**严禁编造**：
+· 不写资料里没有的优惠、赠品、折扣、早鸟价
+· 不写「仅剩X个名额」「最后一天」这类紧迫感，除非资料明确写了名额上限（那就照实说「25人报满即止」）
+· 不写往期好评、获奖、合作机构、老师头衔
+· 不写进校预约、集合点这些**报名之后**才需要的信息
+
+要求：
+· 每版 150-250 字，口语化，像家长之间真心推荐，不要像广告
+· 开头一句钩子；中间 2-3 个具体卖点，必须用活动里真实的环节，不要写「寓教于乐」这种空话
+· 结尾引导：看推文扫码报名 / 私信我
+· 给两版：先写「A 稳重版」，再写「B 活泼版」
+
+直接输出两版文案，不要解释，不要写「以下是」。
+"""
+
+
+def write_promo(question: str, activity_id: Optional[str] = None) -> Dict[str, Any]:
+    """生成推广/招募文案。事实来自资料，写法由模型发挥。"""
+    ctx = knowledge.build_context(activity_id)
+    resp = _client.chat.completions.create(
+        model=config.MODEL,
+        messages=[
+            {"role": "system", "content": _PROMO_SYSTEM},
+            {"role": "user", "content": f"【资料】\n{ctx}\n\n【客服要求】\n{question}"},
+        ],
+        temperature=config.TEMPERATURE,
+    )
+    return {"answer": resp.choices[0].message.content or "",
+            "trace": ["classify", "write_promo"],
+            "usage": _usage(resp.usage)}
 
 
 def internal_notes(question: str, answer: str,
@@ -348,7 +391,37 @@ def answer_chat(
 
     # ---- copy ----
     if decided["kind"] == "copy":
-        text = render_copy(decided.get("stage", ""))
+        # 连「哪一种文案」都没说清 → 反问，不要替她猜成欢迎语
+        if not decided["copy_type"]:
+            out = {"answer": "要哪种文案？\n"
+                             f"· 活动群通知（发在已经报名的家长群）：{STAGE_NAMES}\n"
+                             "· 推广文案（发到别的群或朋友圈拉人报名）",
+                   "trace": ["classify", "ask_copy_type"],
+                   "wrote": [], "write_errors": [],
+                   "missing": store.missing_fields(knowledge.get_activity(aid) or {}),
+                   "usage": total}
+            return out
+
+        # B2 推广/招募文案：没有定稿模板，交给模型写（事实仍取自资料）
+        if decided["copy_type"] == "promo":
+            out = write_promo(question, aid)
+            out.update({"wrote": [], "write_errors": [],
+                        "missing": store.missing_fields(knowledge.get_activity(aid) or {})})
+            out["usage"] = _merge(total, out["usage"])
+            return out
+
+        # B1 活动群定稿：代码填模板，原文输出
+        text = render_copy(decided["stage"], all_when_empty=False)
+        if not text:
+            # 认不出是哪个阶段 —— 宁可反问，也不要把 5 个阶段全吐出来
+            out = {"answer": f"活动群文案分这几个阶段，你要哪一段？\n{STAGE_NAMES}\n"
+                             f"（如果要发到别的群拉人报名，那是推广文案，跟我说「写推广文案」就行）",
+                   "trace": ["classify", "ask_stage"],
+                   "wrote": [], "write_errors": [],
+                   "missing": store.missing_fields(knowledge.get_activity(aid) or {}),
+                   "usage": total}
+            return out
+
         out = {"answer": text, "trace": ["classify", "render_group_messages"],
                "wrote": [], "write_errors": [],
                "missing": store.missing_fields(knowledge.get_activity(aid) or {}),
