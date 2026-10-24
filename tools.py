@@ -84,16 +84,40 @@ def _normalize_activity_id(raw: str) -> str:
     return s
 
 
-def get_activity(activity_id: str) -> str:
+def get_activity(activity_id: str = "") -> str:
     """查询某一期的完整详情（价格、名额、招募对象、环节、报名与退费相关字段）。
 
     Args:
         activity_id: 期次编号，形如 "S16"、"S06"，也接受 "16"、"第16期"。
+                     留空则默认查「当前正在报名」的那一期。
     """
     key = _normalize_activity_id(activity_id)
+
+    # 家长在群里往往直接问「多少钱」「几年级能参加」，不提期次。
+    # 这类问题语境里默认就是「正在报名的这一期」，把这个约定放进工具，
+    # 而不是放在路由里 —— 这样不管谁来调（规则路由 / 模型自主选工具）行为都一致。
+    defaulted = False
+    if not key:
+        for a in _KB["activities"]:
+            if a.get("status") == "报名中":
+                key = a["id"].upper()
+                defaulted = True
+                break
+        if not key:
+            return json.dumps(
+                {
+                    "error": "没有指定期次，也找不到「报名中」的活动",
+                    "hint": "请先问家长是指哪一期，或用 list_activities 列出可选期次",
+                },
+                ensure_ascii=False,
+            )
+
     for a in _KB["activities"]:
         if a["id"].upper() == key:
-            return json.dumps(_strip_internal(a), ensure_ascii=False)
+            data = _strip_internal(a)
+            if defaulted:
+                data["_note"] = f"家长没有指明期次，这里返回的是当前正在报名的 {a['id']}"
+            return json.dumps(data, ensure_ascii=False)
     return json.dumps(
         {
             "error": f"知识库中没有第 {activity_id} 期的记录",
@@ -231,16 +255,16 @@ SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_activity",
-            "description": "查询某一期活动的完整详情：时间、地点、招募对象、名额、价格档位、费用包含、活动环节、退费与注意事项。调用前必须先确定期次编号。",
+            "description": "查询某一期活动的完整详情：时间、地点、招募对象、名额、价格档位、费用包含、活动环节、退费与注意事项。家长问价格、时间、几年级能参加、名额、在哪、室内室外这类「某一期的具体字段」时调用。家长没提期次时不要留空去猜，直接调用（会自动取正在报名的那一期）。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "activity_id": {
                         "type": "string",
-                        "description": "期次编号，如 S16、S06（由 list_activities 返回）",
+                        "description": "期次编号，如 S16、S06（由 list_activities 返回）。家长没指明期次时留空，默认查正在报名的那一期。",
                     }
                 },
-                "required": ["activity_id"],
+                "required": [],
             },
         },
     },
