@@ -221,7 +221,7 @@ def ask(conversation: List[Dict[str, Any]], verbose: bool = True) -> Dict[str, A
 #   写入、生成文案、缺口体检不属于「回答家长问题」，走显式入口（store / renderer），
 #   不经过模型，也就没有「猜意图」这一步。
 
-_CTX_SYSTEM = """你是「山海科普研学」的家长咨询助手，在微信/私域群里为家长答疑。
+_CTX_SYSTEM = """你是「山海科普研学」的家长咨询助手，同时也是客服的工作搭档。
 
 你没有活动数据在脑子里。下面会给你这一期的全部资料，事实一律以资料为准，
 不准编造数字、日期、名额、老师姓名。
@@ -229,7 +229,14 @@ _CTX_SYSTEM = """你是「山海科普研学」的家长咨询助手，在微信
 查不到就说「这一期我这边没有记录，建议看当期推文或群公告」，
 绝不用别的期次顶替，也不要编一个听起来合理的原因。
 
-中文口语化，像熟悉的团队伙伴，先给结论，尽量 150 字内。"""
+**分清楚对面是谁**：
+· 家长问问题 → 正常回答
+· 客服只说了一个字段名、没给值（例如就打「集合地点」「室内室外」）→ 她多半是想填这一项，
+  主动问一句「您是要填这一项吗？告诉我具体内容就行」，不要当成家长在提问
+
+**回复要短**：一到三句，先给结论。缺口由界面右侧实时显示，不要在回复里罗列缺项。
+
+中文口语化，像熟悉的团队伙伴。"""
 
 
 def answer_ctx(
@@ -291,34 +298,6 @@ def answer_ctx(
 #   写错了立刻看得见，也能从 data/backups/ 回滚。不要求模型 100% 判断对。
 #
 #   工具只有一个（update_activity）。读不需要工具——整份资料已经在上下文里了。
-
-_WRITE_HINT = """
-## 客服在对话里补充活动信息时（重要）
-客服会陆续告诉你活动信息（时间、集合地点、价格、名额、是否室外、分组等），
-或者粘贴整篇推文让你录入。
-
-这种情况**必须调用 update_activity 真正写入**，不能只在回复里说「记住了」——那样等于没记。
-
-判断是不是补充信息，按这几条：
-· 输入很短、只有一个词或一个值（「室外」「不分组」「25人」）→ 这是补充信息，直接写
-· 带着具体值说出来的（「这期是室外」「每组4到5个」）→ 这是补充信息，直接写
-· 带问号、带「吗/呢/多少/几/哪/怎么」的 → 这是在问问题，正常回答，不要写
-· 说不准的时候，**宁可先追问一句「您是说要改成室外吗？」也不要猜着写**
-
-· 只写客服明确说过的字段，没说的不要猜，尤其不要填「校门口」「上午」这种像模像样的默认值
-· 写不进去（格式错、字段不允许）就如实转告，不要换个说法糊过去
-· **不要在回复里报「还缺几项」**——右侧状态面板由程序实时算，比你说得准。你只管确认写了什么
-"""
-
-
-def _write_tool_schema() -> list:
-    """只要 update_activity 这一个工具。"""
-    for s in tools.SCHEMAS:
-        if s["function"]["name"] == "update_activity":
-            return [s]
-    return []
-
-
 
 
 # 输入分类：这句话是「补充活动信息」还是「在问问题」？
@@ -436,16 +415,15 @@ def _answer_context(question: str, activity_id: Optional[str],
 
 def _confirm_written(question: str, updates: Dict[str, Any], activity_id: str,
                      ok: bool, err: str) -> Dict[str, Any]:
-    """写完（或写失败）之后，让模型用一句人话回复客服。"""
-    import knowledge
-    import store
-    act = knowledge.get_activity(activity_id) or {}
-    left = [m["label"] for m in store.missing_fields(act)]
+    """写完（或写失败）之后，让模型用一句人话回复客服。
 
+    注意：**不把缺项清单喂进去**。
+    实测过：一旦告诉它「还缺哪几项」，它每条回复都要罗列一遍，客服看得烦。
+    缺项由界面右侧的面板显示，那里是程序实时算的，比模型说一遍更准也更省事。
+    """
     if ok:
         done = "、".join(f"{k}={v}" for k, v in updates.items())
-        note = (f"已经写入的字段：{done}\n"
-                f"这一期还缺：{'、'.join(left) if left else '无'}")
+        note = f"写入成功的字段：{done}"
     else:
         note = f"写入失败，原因是：{err}"
 
@@ -453,9 +431,9 @@ def _confirm_written(question: str, updates: Dict[str, Any], activity_id: str,
         model=config.MODEL,
         messages=[
             {"role": "system", "content":
-             "你在回复客服（不是家长）。用一到两句话说明这次录入的结果："
-             "写了什么 / 为什么没写进去。已经写成功就简短确认，不要重复罗列资料。"
-             "缺项由界面右侧显示，你只要在确实有必要时提一句。"},
+             "你在回复客服（不是家长）。用一到两句话说明这次录入的结果。\n"
+             "写成功就简短确认写了什么；写失败就说清为什么。\n"
+             "**不要罗列还缺哪些字段**，界面右侧有实时面板，重复一遍只会干扰。"},
             {"role": "user", "content": f"客服说的话：{question}\n\n系统实际情况：\n{note}"},
         ],
         temperature=0,
@@ -482,6 +460,54 @@ def _valid_updates(updates: Dict[str, Any]):
         else:
             bad.append(f"{k} 是空值")
     return good, bad
+
+
+_CN_DIGITS = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def _session_no(text: Any) -> Optional[int]:
+    """从「第十六期」「第十七期」「S16」「16」里取出期次数字。
+
+    必须认中文数字：模型抽出来的 session_label 常常是「第十七期」而不是「17」，
+    只抓阿拉伯数字会漏，护栏就形同虚设（实测踩过）。
+    """
+    s = str(text or "")
+    m = re.search(r"第?\s*(\d{1,2})\s*期", s) or re.search(r"[sS]\s*(\d{1,2})", s)
+    if m:
+        return int(m.group(1))
+    m = re.fullmatch(r"\s*(\d{1,2})\s*", s)      # 模型只吐了个纯数字的情况
+    if m:
+        return int(m.group(1))
+    m = re.search(r"第?\s*([零〇一二两三四五六七八九十]{1,3})\s*期", s)
+    if not m:
+        m = re.search(r"([零〇一二两三四五六七八九十]{1,3})", s)
+    if not m:
+        return None
+    t = m.group(1)
+    if "十" in t:
+        left, _, right = t.partition("十")
+        return (_CN_DIGITS.get(left, 1) if left else 1) * 10 + (_CN_DIGITS.get(right, 0) if right else 0)
+    return _CN_DIGITS.get(t) if len(t) == 1 else None
+
+
+def _cross_session_guard(updates: Dict[str, Any], activity_id: str):
+    """拦下「把别期的内容写进这一期」。
+
+    真实事故：客服在改第十六期，顺手把第十七期的推文粘进来，
+    模型抽出 session_label=第十七期、date=2026-11-07…，代码原样写入，
+    **S16 整条记录被换成了第十七期的内容**（标题、日期、名额全变了）。
+
+    这是纪律问题不是语义问题，所以由代码判定：
+    抽到的期次和当前期次不一致，一律不写，让模型去告诉客服。
+    没有任何情况需要「在 S16 里写第十七期」——真要新建，那是 create_activity 的事。
+    """
+    got = _session_no(updates.get("session_label"))
+    cur = _session_no(activity_id)
+    if got and cur and got != cur:
+        return (f"这段内容写的是第{got}期，但当前正在编辑的是第{cur}期，"
+                f"已拒绝写入。要新建一期请用新建功能，不要覆盖现有期次。")
+    return None
 
 
 def answer_chat(
@@ -511,6 +537,17 @@ def answer_chat(
         good, bad = _valid_updates(decided["updates"])
         if verbose:
             print(f"  📝 抽到的字段：{good}   被拒：{bad}")
+
+        # 纪律检查：别期的内容不许写进这一期
+        crossed = _cross_session_guard(good, aid)
+        if crossed:
+            if verbose:
+                print(f"  🛑 跨期拦截：{crossed}")
+            out = _confirm_written(question, good, aid, False, crossed)
+            out["wrote"], out["write_errors"] = [], [crossed]
+            out["missing"] = []
+            return out
+
         if not good:
             out = _answer_context(question, aid, history)
             out["wrote"], out["write_errors"], out["missing"] = [], bad, []
