@@ -20,7 +20,7 @@ goto END
 
 :FAILED
 echo.
-echo [ERROR] Workbench exited with an error. See the message above.
+echo [ERROR] App exited with an error. See the message above.
 pause
 
 :END
