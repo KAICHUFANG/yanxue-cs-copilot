@@ -1,0 +1,376 @@
+{
+ "note": "只收真实家长会说的问法：不带期次、不涉及客服写操作。v3 架构的评测基线。",
+ "cases": [
+  {
+   "id": "B01",
+   "category": "车辆进校",
+   "q": "车不能进学校吗？如果预约的时候写了车牌号",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "车可以进",
+    "可以开进",
+    "开车进",
+    "校内停车",
+    "停车场"
+   ],
+   "must_not_contain": [
+    "不能开车",
+    "车不能进"
+   ],
+   "_truth": "客服答：是开车进来的，我发的这是校内的停车场（车可以开进校，客服会发校内停车场位置）",
+   "source": "真实聊天记录（家长原话）"
+  },
+  {
+   "id": "B02",
+   "category": "迟到",
+   "q": "我能晚一点过去么，周六还有个课要到3点半结束",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "可以",
+    "没问题",
+    "能"
+   ],
+   "must_not_contain": [
+    "不可以晚到",
+    "不能晚到",
+    "不接受迟到",
+    "迟到不能进"
+   ],
+   "_note": "别用「不能」这种短词：会误伤「能不能进」这类正常表述。",
+   "_truth": "客服答：可以的",
+   "source": "真实聊天记录（家长原话）"
+  },
+  {
+   "id": "B03",
+   "category": "迟到",
+   "q": "孩子上完课会晚一点到海大，我们直接送到你们场地可以吗？估计10点到",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "可以",
+    "没问题",
+    "能"
+   ],
+   "must_not_contain": [
+    "不可以晚到",
+    "不能晚到",
+    "不接受迟到",
+    "迟到不能进"
+   ],
+   "_truth": "客服答：没问题",
+   "source": "真实聊天记录（家长原话）"
+  },
+  {
+   "id": "B04",
+   "category": "报名方式",
+   "q": "请问这个怎么报名，是要在群里接龙吗？",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "推文",
+    "链接",
+    "扫码"
+   ],
+   "must_not_contain": [],
+   "must_not_match": [
+    "(要|需要)在群里接龙",
+    "群里接龙报名"
+   ],
+   "_note": "答「不确定是不是接龙」是正确行为，不该判倒；真正错是说成「要在群里接龙」。",
+   "_truth": "客服答：报名链接在推文里呢（不是群接龙）",
+   "source": "真实聊天记录（家长原话）"
+  },
+  {
+   "id": "B05",
+   "category": "报名方式",
+   "q": "本次活动怎么报名呢",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "推文",
+    "链接",
+    "扫码"
+   ],
+   "must_not_contain": [],
+   "must_not_match": [
+    "(要|需要|可以)在群里接龙",
+    "群里接龙报名",
+    "先在群里接龙"
+   ],
+   "_note": "答「不是在群里接龙」是正确行为；只有说成「要在群里接龙」才算错。",
+   "_truth": "客服答：扫我刚发的推文就行了",
+   "source": "真实聊天记录（家长原话）"
+  },
+  {
+   "id": "B06",
+   "category": "进校流程",
+   "q": "预约进校的页面一直显示待审核状态",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "催",
+    "审核",
+    "老师"
+   ],
+   "_truth": "客服答：收到，我通知老师催促一下审核",
+   "source": "真实聊天记录（家长原话）"
+  },
+  {
+   "id": "B07",
+   "category": "多问合一·集合地点",
+   "q": "集合地点在哪里？",
+   "expect_tool": null,
+   "must_contain": [
+    "集合"
+   ],
+   "must_contain_any": [
+    "没有记录",
+    "待确认",
+    "还没定",
+    "定位",
+    "会发",
+    "每期"
+   ],
+   "must_not_contain": [
+    "集合地点是海南大学（海甸校区）"
+   ],
+   "_note": "关键是不能把「活动地点=校区」当成集合点回答。",
+   "_truth": "客服答：集合地点后面会发定位",
+   "source": "真实聊天记录（家长原话）"
+  },
+  {
+   "id": "B08",
+   "category": "多问合一·分组",
+   "q": "事先分好组吗？一组几人？",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "活动开始",
+    "现场",
+    "灵活",
+    "工作人员"
+   ],
+   "_truth": "客服答：分组会在活动开始时组织，根据人数灵活分组；想自己孩子一组可以活动即将开始时跟工作人员说",
+   "source": "真实聊天记录（家长原话）"
+  },
+  {
+   "id": "B09",
+   "category": "多问合一·路线",
+   "q": "研学地点都在海大里面吗？有路线吗？",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "海大",
+    "校园",
+    "路线"
+   ],
+   "_truth": "客服答：研学地点在海大校园中，有路线",
+   "source": "真实聊天记录（家长原话）"
+  },
+  {
+   "id": "B10",
+   "category": "多问合一·四连问",
+   "q": "1.集合地点在哪里？2.事先分好组吗？一组几人？3.研学地点都在海大里面吗？有路线吗？4.时间跨度比较长，如果下暴雨怎么办？",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "室内",
+    "退费"
+   ],
+   "must_not_contain": [],
+   "_truth": "一次回答四件事：集合地点后续发定位、分组现场组织、地点在海大校园有路线、中途下雨有室内预案、活动前大雨退费",
+   "source": "真实聊天记录（家长原话）"
+  },
+  {
+   "id": "R01",
+   "category": "单期查询",
+   "q": "几年级能参加",
+   "expect_tool": null,
+   "must_contain": [
+    "4",
+    "6"
+   ],
+   "must_contain_any": [
+    "年级"
+   ],
+   "source": "模拟家长问法（无期次）"
+  },
+  {
+   "id": "R02",
+   "category": "单期查询",
+   "q": "名额还有多少",
+   "expect_tool": null,
+   "must_contain": [
+    "25"
+   ],
+   "must_not_contain": [
+    "18人",
+    "18 人"
+   ],
+   "source": "模拟家长问法（无期次）"
+  },
+  {
+   "id": "R03",
+   "category": "活动列表",
+   "q": "最近有什么活动可以报名",
+   "expect_tool": null,
+   "must_contain": [
+    "第十六期"
+   ],
+   "must_contain_any": [
+    "报名"
+   ],
+   "source": "模拟家长问法（无期次）"
+  },
+  {
+   "id": "R04",
+   "category": "活动列表",
+   "q": "你们办过哪些活动",
+   "expect_tool": null,
+   "must_contain": [
+    "第十六期",
+    "第六期"
+   ],
+   "must_contain_any": [
+    "期"
+   ],
+   "source": "模拟家长问法（无期次）"
+  },
+  {
+   "id": "R05",
+   "category": "通用规则",
+   "q": "要下大雨了，活动能继续吗",
+   "expect_tool": null,
+   "must_contain": [
+    "室内"
+   ],
+   "must_contain_any": [
+    "取消",
+    "照常",
+    "备用"
+   ],
+   "source": "模拟家长问法（无期次）"
+  },
+  {
+   "id": "R06",
+   "category": "通用规则",
+   "q": "能晚点到吗，路上堵车",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "准时",
+    "不等"
+   ],
+   "must_not_contain": [
+    "不能参加",
+    "无法入场",
+    "迟到不能进",
+    "不接受迟到"
+   ],
+   "source": "模拟家长问法（无期次）"
+  },
+  {
+   "id": "R07",
+   "category": "通用规则",
+   "q": "家长要陪同吗",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "不需要",
+    "默认不",
+    "不用陪",
+    "不陪同",
+    "独立参加"
+   ],
+   "must_not_contain": [
+    "必须陪同",
+    "一定要陪"
+   ],
+   "source": "模拟家长问法（无期次）"
+  },
+  {
+   "id": "R08",
+   "category": "通用规则",
+   "q": "要自己带什么东西",
+   "expect_tool": null,
+   "must_contain": [
+    "水杯"
+   ],
+   "source": "模拟家长问法（无期次）"
+  },
+  {
+   "id": "R09",
+   "category": "进校流程",
+   "q": "怎么预约进校",
+   "expect_tool": null,
+   "must_contain": [
+    "海南大学",
+    "公众号"
+   ],
+   "must_contain_any": [
+    "访客预约",
+    "私信"
+   ],
+   "source": "模拟家长问法（无期次）"
+  },
+  {
+   "id": "R10",
+   "category": "进校流程",
+   "q": "是不是只能从北门进出，西门能不能走",
+   "expect_tool": null,
+   "must_contain": [
+    "北门",
+    "西门"
+   ],
+   "must_not_contain": [
+    "所有门都可以",
+    "所有门都能走"
+   ],
+   "source": "模拟家长问法（无期次）"
+  },
+  {
+   "id": "R11",
+   "category": "进校流程",
+   "q": "孩子不用预约吧",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "不用",
+    "不需要"
+   ],
+   "must_not_contain": [
+    "每个孩子都要预约",
+    "孩子也要预约"
+   ],
+   "source": "模拟家长问法（无期次）"
+  },
+  {
+   "id": "R12",
+   "category": "进校流程",
+   "q": "需要带身份证吗，我看要填身份证号",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "不需要",
+    "不用"
+   ],
+   "source": "模拟家长问法（无期次）"
+  },
+  {
+   "id": "R13",
+   "category": "进校流程",
+   "q": "预约一直显示待审核怎么办",
+   "expect_tool": null,
+   "must_contain": [],
+   "must_contain_any": [
+    "稍",
+    "推送",
+    "催",
+    "审核"
+   ],
+   "source": "模拟家长问法（无期次）"
+  }
+ ]
+}

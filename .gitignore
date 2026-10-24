@@ -1,4 +1,4 @@
-# ---- 密钥（绝对不能进版本库）----
+﻿# ---- 密钥（绝对不能进版本库）----
 .env
 .env.*
 !.env.example
@@ -31,3 +31,5 @@ eval/backups/
 .DS_Store
 Thumbs.db
 desktop.ini
+eval/ab_real_report.json
+eval/tmp_activities_real.json

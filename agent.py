@@ -203,3 +203,72 @@ def ask(conversation: List[Dict[str, Any]], verbose: bool = True) -> Dict[str, A
 
     # ---- 路线 C：代码判断不出来 → 交给模型自己决定调什么（标准 Function Calling）----
     return _fc_loop(conversation, verbose, forced_tool=None)
+
+
+# ============================================================================
+# v3：无路由问答
+# ============================================================================
+#
+# 上面的 ask() 是 v2 架构（关键词路由 + Function Calling）。
+# 保留它是为了跑 A/B 对比，生产路径请用 answer_ctx()。
+#
+# 为什么 v3 不需要路由：
+#   真实家长提问里 0% 会写「第十六期」——群本身就是那一期的群。
+#   期次是**给定**的（knowledge.current_activity_id），不是从句子里猜的。
+#   既然背景已定，就不存在「该查哪份资料」的判断，整份资料直接给模型看即可。
+#
+#   写入、生成文案、缺口体检不属于「回答家长问题」，走显式入口（store / renderer），
+#   不经过模型，也就没有「猜意图」这一步。
+
+_CTX_SYSTEM = """你是「山海科普研学」的家长咨询助手，在微信/私域群里为家长答疑。
+
+你没有活动数据在脑子里。下面会给你这一期的全部资料，事实一律以资料为准，
+不准编造数字、日期、名额、老师姓名。
+
+查不到就说「这一期我这边没有记录，建议看当期推文或群公告」，
+绝不用别的期次顶替，也不要编一个听起来合理的原因。
+
+中文口语化，像熟悉的团队伙伴，先给结论，尽量 150 字内。"""
+
+
+def answer_ctx(
+    question: str,
+    activity_id: Optional[str] = None,
+    verbose: bool = False,
+) -> Dict[str, Any]:
+    """v3 主路径：不做路由，把当前活动的全部资料给模型，直接回答。
+
+    Args:
+        question: 家长的原话
+        activity_id: 当前活动；不传就取「报名中」那一期
+    """
+    import knowledge   # 局部导入，避免和 v2 的循环依赖
+
+    ctx = knowledge.build_context(activity_id)
+    act = knowledge.get_activity(activity_id)
+    label = (act or {}).get("session_label") or "（无当前活动）"
+
+    resp = _client.chat.completions.create(
+        model=config.MODEL,
+        messages=[
+            {"role": "system", "content": _CTX_SYSTEM},
+            {"role": "user", "content": question},
+            {"role": "system", "content": ctx},
+        ],
+        temperature=config.TEMPERATURE,
+    )
+    answer = resp.choices[0].message.content or ""
+    u = resp.usage
+    if verbose:
+        print(f"  📎 当前活动：{label}   上下文 {len(ctx)} 字")
+    return {
+        "answer": answer,
+        # v3 没有工具，trace 记一下「数据从哪来」，方便评测时对照
+        "trace": ["<context>"],
+        "context_chars": len(ctx),
+        "usage": {
+            "prompt_tokens": getattr(u, "prompt_tokens", 0) or 0,
+            "completion_tokens": getattr(u, "completion_tokens", 0) or 0,
+            "total_tokens": getattr(u, "total_tokens", 0) or 0,
+        },
+    }
