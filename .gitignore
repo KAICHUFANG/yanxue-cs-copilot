@@ -33,3 +33,7 @@ Thumbs.db
 desktop.ini
 eval/ab_real_report.json
 eval/tmp_activities_real.json
+eval/ab_v4_report.json
+eval/tmp_activities_hard.json
+eval/tmp_smoke.json
+eval/tmp_v5.json
