@@ -1,0 +1,9 @@
+# Windows 批处理必须是 CRLF，否则 cmd 不执行（踩过：双击没反应）
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 其余文本统一 LF，避免每次提交都出现「整文件改动」
+*.py   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.txt  text eol=lf
