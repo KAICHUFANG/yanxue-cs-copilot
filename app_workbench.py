@@ -37,6 +37,45 @@ FONT = ("Microsoft YaHei UI", 10)
 FONT_SMALL = ("Microsoft YaHei UI", 9)
 FONT_MONO = ("Consolas", 9)
 
+# 面板上显示的字段名。用 store 里的描述会把「室内还是室外」原样露出来，
+# 客服照着抄进对话框就变成了一句问句，反而写不进去（真实踩过）。
+# 所以这里单独给一列短名。
+DISPLAY_NAME = {
+    "session_label": "期次",
+    "title": "活动名",
+    "subtitle": "主题",
+    "status": "状态",
+    "date": "活动日期",
+    "weekday": "星期",
+    "time_range": "活动时段",
+    "duration_minutes": "时长(分)",
+    "location": "活动地点",
+    "transport": "出行方式",
+    "meeting_point": "集合地点",
+    "meeting_time": "集合时间",
+    "target_audience": "招募对象",
+    "participant_format": "参与形式",
+    "indoor_outdoor": "室内/室外",
+    "grouping": "分组",
+    "group_size": "每组人数",
+    "capacity": "名额",
+    "pricing": "价格",
+    "fee_includes": "费用包含",
+    "insurance": "保险",
+    "dress_code": "着装要求",
+    "segments": "活动环节",
+    "highlights": "亮点",
+    "awards": "奖项",
+    "learning_outcomes": "研学收获",
+}
+
+# 枚举字段：告诉客服应该说什么词，避免她自由发挥
+ENUM_HINT = {
+    "indoor_outdoor": "说「室内」或「室外」",
+    "grouping": "说「分组」或「不分组」",
+    "status": "说「报名中」「已结束」「待确认」",
+}
+
 
 class Workbench:
     def __init__(self, root: tk.Tk):
@@ -56,10 +95,12 @@ class Workbench:
         self._build()
         self.refresh_status()
         self._poll()
-        self.sys("欢迎。左边随便说人话：\n"
+        self.sys("欢迎。左边打字就行：\n"
                  "  · 家长问什么，直接打进来\n"
-                 "  · 要补信息，也直接说：「这期是室外活动，下午4点集合」\n"
-                 "  · 右边会实时显示这一期还缺什么")
+                 "  · 要补信息，**直接把值说出来**：「室外」「每组4到5人」「集合时间16:00」\n"
+                 "    只打一个词也可以，程序会直接写库，不用等模型判断\n"
+                 "  · 如果你打的是问句（「室内还是室外」「几点集合」），会当成提问来回答\n"
+                 "  · 右边会实时显示这一期还缺什么，写完立刻更新")
 
     # ------------------------------------------------------------ 界面骨架
     def _build(self):
@@ -195,13 +236,16 @@ class Workbench:
             row.pack(fill=tk.X, padx=4, pady=1)
             tk.Label(row, text=icon, font=FONT_SMALL, bg=PANEL_BG, fg=color,
                      width=2).pack(side=tk.LEFT)
-            label = store.ALLOWED_FIELDS[f].split("，")[0].split("（")[0]
+            label = DISPLAY_NAME.get(f) or store.ALLOWED_FIELDS[f].split("，")[0].split("（")[0]
             if is_req:
                 label = "★" + label
             tk.Label(row, text=label, font=FONT_SMALL, bg=PANEL_BG,
                      fg=FG_BOT if filled else FG_MUTED, width=9, anchor="w").pack(side=tk.LEFT)
-            tk.Label(row, text=self._fmt(v), font=FONT_SMALL, bg=PANEL_BG,
-                     fg=FG_BOT if filled else "#cccccc", anchor="w",
+            shown = self._fmt(v)
+            if not filled and f in ENUM_HINT:
+                shown = ENUM_HINT[f]
+            tk.Label(row, text=shown, font=FONT_SMALL, bg=PANEL_BG,
+                     fg=FG_BOT if filled else "#bbbbbb", anchor="w",
                      wraplength=170, justify="left").pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         n = len(missing)
@@ -275,6 +319,8 @@ class Workbench:
         else:
             if payload.get("wrote"):
                 self.append("   ✎ 已写入：" + "、".join(payload["wrote"]), "tool")
+            for err in (payload.get("write_errors") or []):
+                self.append("   ✗ 没写进去：" + err, "warn")
             self.append("🤖 " + payload["answer"], "bot")
             self.last_bot = payload["answer"]
             self.tokens += payload.get("usage", {}).get("total_tokens", 0)
