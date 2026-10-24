@@ -59,10 +59,17 @@ def grade(case: dict, result: dict) -> dict:
 
     checks = {}
 
-    # 1) 工具是否选对
+    # 1) 走的路径对不对
+    #    新架构没有「按意图挑工具」这回事了，只剩两条确定性路径：
+    #      · 要文案 → render_group_messages（必须原文输出，所以由代码填模板）
+    #      · 补充信息 → update_activity（必须过白名单和备份）
+    #    其余一律走上下文直答，trace 里是 <context>。
     expect = case.get("expect_tool")
     if expect:
-        checks["tool_ok"] = expect in trace
+        if expect in ("render_group_messages", "update_activity"):
+            checks["tool_ok"] = expect in trace
+        else:
+            checks["tool_ok"] = "<context>" in trace
     else:
         checks["tool_ok"] = True   # 没指定就不判
 
@@ -115,9 +122,8 @@ def main() -> None:
     t0 = time.time()
 
     for i, case in enumerate(cases, 1):
-        conv = [{"role": "user", "content": case["q"]}]
         try:
-            res = agent.ask(conv, verbose=False)
+            res = agent.answer_chat(case["q"])
         except Exception as e:
             res = {"answer": f"【调用失败】{e}", "trace": [], "usage": {}}
 

@@ -1,4 +1,4 @@
-"""
+﻿"""
 山海科普 · 客服工作台（图形界面）
 
 界面形态：左边对话，右边状态。所有输入都走对话框，客服不需要学任何表单。
@@ -23,7 +23,6 @@ from tkinter import ttk
 import agent
 import config
 import knowledge
-import renderer
 import store
 
 BG = "#f7f7f5"
@@ -284,10 +283,9 @@ class Workbench:
             notes = []
             if self.want_notes.get():
                 try:
-                    import pipeline
-                    notes = pipeline.internal_notes(
-                        text, r["answer"], knowledge.build_context(self.activity_id),
-                        [text], [m["label"] for m in r.get("missing", [])],
+                    notes = agent.internal_notes(
+                        text, r["answer"], self.activity_id,
+                        [m["label"] for m in r.get("missing", [])],
                     )
                 except Exception:
                     notes = []
@@ -326,13 +324,15 @@ class Workbench:
         self.root.after(120, self._poll)
 
     def gen_copy(self):
+        """一键生成全部群文案。走代码填模板，不经过模型，保证原文。"""
         try:
-            text = renderer.render_group_messages(self.activity_id)
+            text = agent.render_copy("")
         except Exception as e:
             self.append("⚠ 生成失败：" + str(e), "warn")
             return
-        self.append("📋 群文案（可直接复制）\n" + text, "bot")
+        self.append("📋 群文案（可直接复制）\n\n" + text, "bot")
         self.last_bot = text
+        self.status.configure(text="已生成，点「复制上一条」即可粘贴")
 
     def copy_last(self):
         if not self.last_bot:

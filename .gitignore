@@ -1,4 +1,4 @@
-﻿# ---- 密钥（绝对不能进版本库）----
+# ---- 密钥（绝对不能进版本库）----
 .env
 .env.*
 !.env.example
@@ -19,8 +19,8 @@ outputs/
 data/backups/
 
 # ---- 评测产物（可重新生成，不进仓库）----
+eval/tmp_*.json
 eval/report.json
-eval/ab_report.json
 eval/backups/
 
 # ---- IDE / 系统 ----
@@ -29,6 +29,3 @@ eval/backups/
 .DS_Store
 Thumbs.db
 desktop.ini
-eval/ab_real_report.json
-eval/ab_v4_report.json
-eval/tmp_*.json

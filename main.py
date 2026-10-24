@@ -1,13 +1,15 @@
 """
-命令行入口
+命令行入口（图形界面是主入口，这个用于排查和批量试问）
 
 用法：
-    python main.py              交互模式，一行一个问题
-    python main.py --demo       自动跑 6 个预设问题（用来验证 + 截图）
+    .venv\\Scripts\\python.exe main.py              # 交互模式
+    .venv\\Scripts\\python.exe main.py --demo       # 跑几条预设，验证环境
+    .venv\\Scripts\\python.exe main.py --flow       # 打印群文案流程总览
+    .venv\\Scripts\\python.exe main.py 集合地点在哪   # 直接问一句
 
-内置命令（交互模式下输入）：
-    /reset   清空对话历史，重新开始
-    /usage   看本次会话累计 token
+命令（交互模式里可用）：
+    /reset   清空多轮上下文
+    /usage   看本次会话花了多少 token
     /quit    退出
 """
 
@@ -15,151 +17,95 @@ import sys
 
 import agent
 import config
+import knowledge
+import store
 
-# Windows 控制台默认是 GBK 编码，直接打印 emoji 会抛 UnicodeEncodeError。
-# 这里把输出流切成 UTF-8，避免「代码没问题但一跑就崩」。
-if sys.platform == "win32":
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except Exception:
-            pass
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
-DEMO_QUESTIONS = [
-    "最近有什么活动可以报名？",
-    "第十六期多少钱？",
-    "第十六期适合多大的孩子？家长要陪着吗？",
-    "下雨的话会取消吗？怎么退费？",
-    "第二期是什么活动？",
-    "第六期和第十六期分别多少钱？",
+
+DEMO = [
+    "集合地点在哪里？",
+    "几年级能参加？",
+    "要自己带什么东西？",
+    "是不是只能从北门进出，西门能不能走",
+    "这次活动不是室内的",
+    "现在信息齐了吗",
 ]
 
 
+def show(label: str, r: dict) -> None:
+    print(f"\n👤 {label}")
+    if r.get("wrote"):
+        print(f"   ✎ 已写入：{'、'.join(r['wrote'])}")
+    for e in r.get("write_errors") or []:
+        print(f"   ✗ 没写进去：{e}")
+    print(f"🤖 {r['answer']}")
+    print(f"   [调用 {' → '.join(r.get('trace', []))} | {r['usage'].get('total_tokens', 0)} tokens]")
+
+
 def print_flow() -> None:
-    """打印活动群文案流程总览（「栏」的 CLI 版，给人看，不经过模型）。
-
-    这些内容是有标准答案的，直接展示原文比让模型复述更可靠。
-    """
-    import json
-
-    path = config.DATA_FILE.parent / "group_messages.json"
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
-
-    print()
-    print("=" * 64)
-    print("活动群文案流程总览")
-    print("=" * 64)
-    for st in data["timeline"]:
-        print(f"\n{st['stage']}")
-        print(f"  什么时候：{st.get('when','—')}")
-        if st.get("uses_process"):
-            print(f"  引用流程：{st['uses_process']}（见进校预约定稿）")
+    for st in knowledge.load_group_messages().get("timeline", []):
+        print(f"\n{st['stage']}　{st.get('when', '')}")
         for msg in st.get("messages", []):
             manual = msg.get("type") == "manual_send_required"
-            flag = "★需手动发" if manual else "可复制发"
-            print(f"    · {msg['label']}  [{flag}]  ({msg.get('source','—')})")
-        for todo in st.get("handler_todos", []):
-            print(f"    ⚠ 待办：{todo['title']}")
-    print("\n" + "=" * 64)
-    print("想改某一条文案，直接把那条发给我，我在对话框里帮你改。")
-    print("完整版见：docs/活动群文案流程.md")
-    print("=" * 64)
-
-
-def print_answer(result: dict) -> None:
-    print()
-    print("🤖 " + result["answer"].replace("\n", "\n   "))
-    print()
-    print(f"   [工具调用 {result['tool_rounds']} 轮 | tokens {result['usage']['total_tokens']}]")
+            print(f"  · {msg.get('label')} [{'需手动发' if manual else '可复制发'}]")
 
 
 def run_demo() -> None:
-    print("=" * 60)
-    print("演示模式：依次提问", len(DEMO_QUESTIONS), "个问题")
-    print("=" * 60)
-    for i, q in enumerate(DEMO_QUESTIONS, 1):
-        print()
-        print(f"[{i}/{len(DEMO_QUESTIONS)}] 👤 {q}")
-        # 每个问题独立成一轮对话：必须把问题本身放进 messages，
-        # 否则模型只看到 system prompt，根本不知道家长问的是什么。
-        conv = [{"role": "user", "content": q}]
-        result = agent.ask(conv, verbose=True)
-        print_answer(result)
-    print("=" * 60)
-    print("演示结束")
+    for q in DEMO:
+        show(q, agent.answer_chat(q))
+    act = knowledge.get_activity() or {}
+    left = [m["label"] for m in store.missing_fields(act)]
+    print(f"\n当前活动：{act.get('session_label')} {act.get('title')}")
+    print(f"还缺：{'、'.join(left) if left else '无'}")
 
 
 def run_interactive() -> None:
-    print("=" * 60)
-    print("山海科普 · 客服助手 v0.1")
-    print("=" * 60)
-    print("直接说人话就行，比如：")
-    print("  · 第十六期多少钱？")
-    print("  · 帮我写第十六期的活动群文案")
-    print("  · 第十六期价格是单人88，两人同行78，三人同行68")
-    print()
-    print("命令：")
-    print("  /paste   粘贴多行内容（推文、聊天记录）")
-    print("  /flow    看活动群文案流程总览")
-    print("  /reset   清空上下文    /usage 看用量    /quit 退出")
-    print("=" * 60)
-
-    conversation = []
-    session_tokens = 0
-
+    history = []
+    tokens = 0
+    print("输入问题回车发送。命令：/reset /usage /quit\n")
     while True:
         try:
-            question = input("\n👤 ").strip()
+            q = input("> ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\n再见。")
+            print()
             break
-
-        if not question:
+        if not q:
             continue
-        if question in ("/quit", "/exit", "/q"):
-            print("再见。")
+        if q in ("/quit", "/q"):
             break
-        if question == "/reset":
-            conversation = []
+        if q == "/reset":
+            history = []
             print("（上下文已清空）")
             continue
-        if question == "/usage":
-            print(f"本次会话累计 tokens: {session_tokens}")
+        if q == "/usage":
+            print(f"本次会话共 {tokens} tokens")
             continue
-        if question == "/flow":
-            print_flow()
-            continue
-        if question == "/paste":
-            print("（多行模式）把内容粘进来，粘完单独一行输入 /end 结束：")
-            lines = []
-            while True:
-                try:
-                    line = input()
-                except (EOFError, KeyboardInterrupt):
-                    break
-                if line.strip() == "/end":
-                    break
-                lines.append(line)
-            question = "\n".join(lines).strip()
-            if not question:
-                print("（没有内容，已取消）")
-                continue
-            print(f"（已接收 {len(lines)} 行，{len(question)} 字）")
 
-        conversation.append({"role": "user", "content": question})
-        result = agent.ask(conversation, verbose=True)
-        session_tokens += result["usage"]["total_tokens"]
-        print_answer(result)
+        r = agent.answer_chat(q, history=history)
+        show(q, r)
+        tokens += r["usage"].get("total_tokens", 0)
+        history.append({"role": "user", "content": q})
+        history.append({"role": "assistant", "content": r["answer"]})
+
+
+def main() -> None:
+    config.check()
+    print(config.describe())
+    act = knowledge.get_activity() or {}
+    print(f"当前活动：{act.get('session_label')} {act.get('title')}\n")
+
+    args = sys.argv[1:]
+    if "--flow" in args:
+        print_flow()
+    elif "--demo" in args:
+        run_demo()
+    elif args:
+        show(" ".join(args), agent.answer_chat(" ".join(args)))
+    else:
+        run_interactive()
 
 
 if __name__ == "__main__":
-    config.check()
-    print(config.describe())
-    print()
-    if "--demo" in sys.argv:
-        run_demo()
-    elif "--flow" in sys.argv:
-        print_flow()
-    else:
-        run_interactive()
+    main()
