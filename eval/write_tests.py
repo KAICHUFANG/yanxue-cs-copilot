@@ -25,15 +25,30 @@ EVAL_DIR = Path(__file__).resolve().parent
 PROJ = EVAL_DIR.parent
 FIXTURE = EVAL_DIR / "fixtures" / "activities_fixture.json"
 TMP = EVAL_DIR / "tmp_write.json"
+TMP_DATA = EVAL_DIR / "tmp_data"          # 整个 data 目录的副本
+
+# 只隔离 ACTIVITIES_FILE 是不够的：articles/processes/group_messages 都走 config.DATA_DIR。
+# 粘贴推文的用例会调 save_article 覆盖 articles/current.md —— 曾经把真实推文冲掉过，
+# 靠 git checkout 才恢复。所以这里把整个 data 目录复制出来，连 DATA_DIR 一起指过去。
+shutil.rmtree(TMP_DATA, ignore_errors=True)
+shutil.copytree(PROJ / "data", TMP_DATA, ignore=shutil.ignore_patterns("backups"))
 
 shutil.copy2(FIXTURE, TMP)
 os.environ["ACTIVITIES_FILE"] = str(TMP)
 os.environ.setdefault("TEMPERATURE", "0")
 sys.path.insert(0, str(PROJ))
 
-import agent        # noqa: E402
 import config       # noqa: E402
+
+config.DATA_DIR = TMP_DATA
+config.DATA_FILE = TMP
+
+import agent        # noqa: E402
 import knowledge    # noqa: E402
+import store        # noqa: E402
+
+store.DATA_DIR = TMP_DATA
+store.BACKUP_DIR = TMP_DATA / "backups"
 
 
 WATCH = ("session_label", "title", "date", "time_range", "location",
@@ -162,10 +177,14 @@ def main() -> int:
     print("\n" + "=" * 78)
     print(f"合计 {total} 条，失败 {bad} 条")
     print("=" * 78)
-    try:
-        TMP.unlink()
-    except OSError:
-        pass
+    for p in (TMP, TMP_DATA):
+        try:
+            if p.is_dir():
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                p.unlink()
+        except OSError:
+            pass
     return 1 if bad else 0
 
 

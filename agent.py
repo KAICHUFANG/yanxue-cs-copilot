@@ -523,7 +523,10 @@ def answer_chat(
     # ---- 粘进来一篇推文：先整篇存原文，再抽固定字段 ----
     # 原文不拆字段（推文是叙述文字，拆了必丢东西），只有固定字段进库。
     article_saved = ""
-    if decided.get("is_article") and len(question) > 200:
+    # 只有「这次是在录一期新的推文」才落盘。
+    # 曾经只判 is_article、不判 kind，结果模型把一段长文案请求误标成 is_article，
+    # 就把当期推文覆盖掉了（实测踩过，靠 git 才恢复）。判断是模型给的，破坏动作不能跟着它走。
+    if decided.get("is_article") and decided["kind"] == "update" and len(question) > 200:
         rel = knowledge.save_article(question)
         store.set_article_pointer(rel)
         article_saved = rel
@@ -547,10 +550,23 @@ def answer_chat(
             out["write_errors"] = [] if ok else [err]
             out["article_saved"] = article_saved
             return done(out)
+        # 原文存下来了，但固定字段一个都没抽出来 → 直说，别拿长文本去走问答
+        if article_saved:
+            out = {"answer": ("推文原文已经存下来了，但没从里面认出新一期的固定字段。\n"
+                              "价格、名额、日期、集合点这几项直接告诉我，我填进去。"),
+                   "trace": ["classify", "save_article"],
+                   "write_errors": bad, "article_saved": article_saved}
+            return done(out)
         # 抽到的字段全不合法 → 当提问处理，同时把被拒原因带出去
         out = answer_ctx(question, aid, history, stream_cb=stream_cb)
         out["write_errors"] = bad
         return done(out)
+
+    if decided["kind"] == "update" and article_saved:
+        return done({"answer": ("推文原文已经存下来了，但没从里面认出新一期的固定字段。\n"
+                                "价格、名额、日期、集合点这几项直接告诉我，我填进去。"),
+                     "trace": ["classify", "save_article"],
+                     "article_saved": article_saved})
 
     # ---- copy ----
     if decided["kind"] == "copy":
