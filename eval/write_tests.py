@@ -93,8 +93,16 @@ NEW_TWEET = """【第十七期｜海岛珊瑚守护者】研学活动招募
 名额：30人
 集合：13:40 在海大北门集合
 """
+
+# (推文, 必须被写入的字段, 推文里没写、因此必须被清空的字段)
+#
+# 第二列是这个 bug 的核心断言：
+#   以前是「只覆盖推文里提到的字段」，推文没提的集合时间、室内外、分组、价格
+#   全留着上一期的值，客服照着答家长就答错了期。所以「没提到的必须清空」。
 REPLACE_CASES = [
-    (NEW_TWEET, {"session_label": "第十七期", "capacity": 30, "meeting_point": "海大北门"}),
+    (NEW_TWEET,
+     {"session_label": "第十七期", "capacity": 30, "meeting_point": "海大北门"},
+     ["pricing", "indoor_outdoor", "grouping", "group_size"]),
 ]
 # 不该被当成「换活动」的普通改字段
 STAY_CASES = ["名额改成28人", "这支队伍17个人，名额改成28人"]
@@ -115,6 +123,77 @@ def check(expect: dict, before: dict, after: dict) -> bool:
             if (got or "") != want:
                 return False
     return True
+
+
+def stale_left(after: dict, must_clear) -> list:
+    """推文没写的字段，还留着上一期的值 → 返回这些字段名（空列表 = 干净）。"""
+    return [k for k in must_clear if after.get(k) not in (None, "", [], {})]
+
+
+def store_replace_tests() -> int:
+    """不走模型，直接测 store 的整条替换。
+
+    为什么单独测这一层：
+        上面那条端到端用例的结果有一半取决于模型抽了哪些字段，会抖。
+        而「没抽到的字段必须清空」是纯代码纪律，必须 100% 稳定 —— 它塌了就是串期事故。
+    """
+    print("\n" + "-" * 78)
+    print("store 整条替换（不走模型，纯代码纪律）")
+    print("-" * 78)
+
+    bad = 0
+    archive = TMP_DATA / "archive" / "superseded.jsonl"
+    reset()
+    before = knowledge.get_activity("S16") or {}
+    n_before = len(archive.read_text(encoding="utf-8").splitlines()) if archive.exists() else 0
+
+    # 只给三个字段，看剩下的是不是真的清空
+    res = store.update_activity(None, {
+        "session_label": "第十七期",
+        "capacity": 30,
+        "meeting_point": "海大北门",
+    }, replace=True)
+    after = knowledge.get_activity("S16") or {}
+    n_after = len(archive.read_text(encoding="utf-8").splitlines()) if archive.exists() else 0
+
+    checks = [
+        ("写入成功", res.get("ok") is True),
+        ("id 跟着期次换成 S17", after.get("id") == "S17"),
+        ("session_no 同步成 17", after.get("session_no") == 17),
+        ("抽到的字段写进去了", after.get("capacity") == 30
+         and after.get("meeting_point") == "海大北门"),
+        # 关键：没给的一律清空，不许继承上一期
+        # （status 要排除：它会被默认成「待确认」，本来就不是空值）
+        ("没给的字段全部清空",
+         stale_left(after, [k for k in store.ALLOWED_FIELDS
+                            if k not in ("session_label", "capacity", "meeting_point",
+                                         "status")]) == []),
+        ("_ 开头的内部字段没跟过来",
+         [k for k in after if k.startswith("_")
+          and k not in ("_last_updated", "_replaced_from", "_replaced_at")] == []),
+        ("白名单外旧字段（capacity_text / source / _missing）没跟过来",
+         [k for k in ("capacity_text", "source", "_missing", "capacity_incentive",
+                      "award_note", "curriculum_support") if k in after] == []),
+        ("旧记录进了归档（多了一行）", n_after == n_before + 1),
+        ("归档里存的是上一期", "第十六期" in (archive.read_text(encoding="utf-8").splitlines()[-1]
+                                             if n_after else "")),
+        ("status 默认成待确认（不瞎猜报名中）", after.get("status") == "待确认"),
+    ]
+    for name, ok in checks:
+        if not ok:
+            bad += 1
+        print(f"  {'✅' if ok else '❌'} {name}")
+
+    # 反向用例：合并模式**必须**保留没提到的字段，别把这条修复做成「一律清空」
+    reset()
+    store.update_activity(None, {"meeting_point": "海大北门"}, replace=False)
+    after2 = knowledge.get_activity("S16") or {}
+    ok = after2.get("capacity") == before.get("capacity") and after2.get("session_label") == "第十六期"
+    if not ok:
+        bad += 1
+    print(f"  {'✅' if ok else '❌'} 合并模式仍然只覆盖提到的字段（capacity 保留 "
+          f"{before.get('capacity')}→{after2.get('capacity')}）")
+    return bad
 
 
 def main() -> int:
@@ -143,22 +222,27 @@ def main() -> int:
         print(f"   回复（{len(r['answer'])}字）：{r['answer'][:80].replace(chr(10), ' ')}")
 
     print("\n" + "-" * 78)
-    print("整期替换（粘新一期推文 → 覆盖成新活动，旧数据自动备份）")
+    print("整期替换（粘新一期推文 → 整条换成新活动，旧记录进归档）")
     print("-" * 78)
 
-    for q, expect in REPLACE_CASES:
+    for q, expect, must_clear in REPLACE_CASES:
         reset()
         before = snap()
         r = agent.answer_chat(q, activity_id="S16")
         after = snap()
         changed = {k: v for k, v in after.items() if before.get(k) != v}
-        ok = check(expect, before, after)
+        stale = stale_left(after, must_clear)
+        ok = check(expect, before, after) and not stale and r.get("replaced") is True
         if not ok:
             bad += 1
         print(f"\n{'✅' if ok else '❌'} {q.splitlines()[0]}")
         print(f"   写入 {len(r['wrote'])} 个字段   磁盘变化 {list(changed)}")
         print(f"   session_label：{before.get('session_label')} → {after.get('session_label')}")
+        print(f"   整条替换判定：{r.get('replaced')}")
+        print(f"   该清空的还留着：{stale or '无（已清空）'}")
         print(f"   回复：{r['answer'][:90].replace(chr(10), ' ')}")
+
+    bad += store_replace_tests()
 
     print("\n" + "-" * 78)
     print("普通改字段（不应该被当成换活动）")

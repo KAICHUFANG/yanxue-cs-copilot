@@ -213,8 +213,21 @@ __FIELDS__
   有小标题、有段落、讲活动是干什么的）
 · false = 其他所有情况
 
+**粘的是整篇推文时，再判断一次 is_new_activity（这条很关键，判错会串期）：**
+· true = 这是**另一期新活动**的推文（有期次、有日期、讲的是新活动）
+· false = 这是**当前这一期**的推文重发/更正，或者只是同一期的补充说明
+
+为什么重要：另一期的推文要**整条换掉**旧记录。如果按「只覆盖推文里提到的字段」处理，
+推文没写的集合点、名额、室内外就会留着上一期的值，客服照着答家长就答错了期。
+
+所以第一次见到新一期的推文时：
+· 只抽推文里**明确写了**的字段；推文没写的字段**留空，不要填**
+· **不要拿「现值」来补**：现值是上一期的，填进去就是串期
+· 尤其当推文只写了「名额有限，报满即止」这种说法、没有具体数字时，
+  capacity 就不要填，让它空着（空着界面会提示客服去确认，填错了没人发现）
+
 只输出 JSON：
-{"kind": "update" | "copy" | "question", "is_article": true | false, "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语/活动提醒/出发提醒/结束感谢；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
+{"kind": "update" | "copy" | "question", "is_article": true | false, "is_new_activity": true | false, "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语/活动提醒/出发提醒/结束感谢；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
 
 promo_channel 怎么填：
 · 提到「朋友圈」「盆友圈」「pyq」「圈里」「动态」→ moments
@@ -273,6 +286,7 @@ def classify_input(question: str, activity_id: Optional[str] = None) -> Dict[str
     return {
         "kind": kind,
         "is_article": bool(data.get("is_article")),
+        "is_new_activity": bool(data.get("is_new_activity")),
         "copy_type": copy_type,
         "promo_channel": channel,
         "updates": data.get("updates") if isinstance(data.get("updates"), dict) else {},
@@ -398,9 +412,29 @@ def _confirm_written(question: str, updates: Dict[str, Any],
             "trace": ["classify", "update_activity"], "usage": _usage(resp.usage)}
 
 
-def write_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
-    """把字段写进当前活动。薄薄一层，真正干活的是 store（校验+备份）。"""
-    return store.update_activity(None, updates)
+def write_updates(updates: Dict[str, Any], replace: bool = False,
+                  keep_article: bool = True) -> Dict[str, Any]:
+    """把字段写进当前活动。薄薄一层，真正干活的是 store（校验+备份+归档）。"""
+    return store.update_activity(None, updates, replace=replace, keep_article=keep_article)
+
+
+def _is_other_session(decided: Dict[str, Any]) -> bool:
+    """这次粘进来的推文，是不是「另一期」的？
+
+    两条独立信号，任一成立就算另一期：
+      ① 代码比期次 —— 推文里写明了期次，而且和库里当前那一期不一样。
+         这一条最可靠，因为期次是固定字段，不靠模型自由发挥。
+      ② 模型判 is_new_activity —— 兜住推文没写期次的情况。
+    为什么不只用模型：模型偶尔会把「同一期推文重发」判成新一期，
+    那会白白清空客服手工补过的集合点。代码这一路能推翻它。
+    """
+    if not decided.get("is_article"):
+        return False
+    new_label = str((decided.get("updates") or {}).get("session_label") or "").strip()
+    old_label = str((knowledge.get_activity() or {}).get("session_label") or "").strip()
+    if new_label and old_label and new_label != old_label:
+        return True
+    return bool(decided.get("is_new_activity"))
 
 
 # ---------------------------------------------------------------- 文案
@@ -592,6 +626,8 @@ def answer_chat(
         out.setdefault("wrote", [])
         out.setdefault("article_saved", "")
         out.setdefault("write_errors", [])
+        out.setdefault("replaced", False)
+        out.setdefault("dropped", [])
         out.setdefault("missing", store.missing_fields(knowledge.get_activity(aid) or {}))
         # 只有 question 那条路是真流式；其余一次性结果在这里整段回调一次，
         # 界面就不需要为「有没有流式」写两个分支。
@@ -602,6 +638,11 @@ def answer_chat(
     # ---- 粘进来一篇推文：先整篇存原文，再抽固定字段 ----
     # 原文不拆字段（推文是叙述文字，拆了必丢东西），只有固定字段进库。
     article_saved = ""
+    article_archived = ""
+    # 上一期的推文要先按「期次」名字归档，否则换期之后 current.md 一覆盖就找不回来了
+    # （save_article 的自动备份是时间戳命名，翻起来只能一个个打开猜）。
+    if _is_other_session(decided):
+        article_archived = knowledge.archive_article()
     # 只有「这次是在录一期新的推文」才落盘。
     # 曾经只判 is_article、不判 kind，结果模型把一段长文案请求误标成 is_article，
     # 就把当期推文覆盖掉了（实测踩过，靠 git 才恢复）。判断是模型给的，破坏动作不能跟着它走。
@@ -610,24 +651,43 @@ def answer_chat(
         store.set_article_pointer(rel)
         article_saved = rel
         if verbose:
-            print(f"  📄 推文原文已存：{rel}（{len(question)} 字）")
+            print(f"  📄 推文原文已存：{rel}（{len(question)} 字）"
+                  + (f"；上一期原文已归档 {article_archived}" if article_archived else ""))
 
     # ---- update ----
     if decided["kind"] == "update" and decided["updates"]:
         good, bad = _valid_updates(decided["updates"])
+        # 粘的是另一期的推文 → 整条替换，没抽到的字段一律清空。
+        # 只做合并的话，新一期会继承上一期的集合点/名额/室内外，客服就答错期了。
+        replace = _is_other_session(decided) and bool(good)
         if verbose:
-            print(f"  📝 抽到：{good}  被拒：{bad}")
+            print(f"  📝 抽到：{good}  被拒：{bad}  整条替换：{replace}")
         if good:
-            res = write_updates(good)
+            res = write_updates(good, replace=replace, keep_article=bool(article_saved))
             ok = bool(res.get("ok"))
             err = "" if ok else str(res.get("error") or res)
-            out = _confirm_written(
-                question, good, ok, err,
-                extra=(f"整篇推文原文也已存档（{article_saved}），"
-                       f"以后问活动内容直接读原文，不用再拆字段" if article_saved else ""))
+            extras: List[str] = []
+            if article_saved:
+                extras.append(f"整篇推文原文也已存档（{article_saved}），"
+                              f"以后问活动内容直接读原文，不用再拆字段")
+            if ok and replace:
+                n = len(res.get("dropped_fields") or [])
+                extras.append(
+                    f"这次是**整条替换**成「{good.get('session_label') or '新一期'}」："
+                    f"上一期（{res.get('activity_id')} 之前的记录，共 {n} 项）已归档，"
+                    f"推文没写到的字段已经清空，等客服向负责人确认后再补。"
+                    f"跟客服说清楚：清空是故意的，不是出错。")
+            elif ok:
+                extras.append("这次是**同一期的信息补充**，只覆盖这次提到的字段，其余保持不动。")
+            if article_archived:
+                extras.append(f"上一期推文原文已归档到 {article_archived}，后面要找回还能查。")
+            out = _confirm_written(question, good, ok, err,
+                                   extra="\n".join(extras))
             out["wrote"] = sorted(good) if ok else []
             out["write_errors"] = [] if ok else [err]
             out["article_saved"] = article_saved
+            out["replaced"] = bool(ok and replace)
+            out["dropped"] = res.get("dropped_fields") or []
             return done(out)
         # 原文存下来了，但固定字段一个都没抽出来 → 直说，别拿长文本去走问答
         if article_saved:

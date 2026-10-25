@@ -166,6 +166,12 @@ with left:
                 st.markdown(m["content"])
             if m.get("wrote"):
                 st.caption("✎ 已写入：" + "、".join(m["wrote"]))
+            if m.get("replaced"):
+                st.warning(
+                    f"这次是**整条替换**成新一期：上一期已归档，"
+                    f"推文没写到的 {m.get('dropped', 0)} 项旧字段已清空。\n\n"
+                    f"清空是故意的，不是出错 —— 那些值属于上一期，留着会让客服答错期。"
+                    f"还缺什么看右边面板。")
             for e in m.get("errors") or []:
                 st.error("没写进去：" + e)
             if m.get("notes"):
@@ -217,6 +223,12 @@ if prompt:
 
             if r.get("wrote"):
                 st.caption("✎ 已写入：" + "、".join(r["wrote"]))
+            if r.get("replaced"):
+                st.warning(
+                    f"这次是**整条替换**成新一期：上一期已归档，"
+                    f"推文没写到的 {len(r.get('dropped') or [])} 项旧字段已清空。\n\n"
+                    f"清空是故意的，不是出错 —— 那些值属于上一期，留着会让客服答错期。"
+                    f"还缺什么看右边面板。")
             for e in r.get("write_errors") or []:
                 st.error("没写进去：" + e)
 
@@ -238,6 +250,8 @@ if prompt:
         "content": r["answer"],
         "code": is_copy,
         "wrote": r.get("wrote", []),
+        "replaced": bool(r.get("replaced")),
+        "dropped": len(r.get("dropped") or []),
         "errors": r.get("write_errors", []),
         "notes": notes,
     })

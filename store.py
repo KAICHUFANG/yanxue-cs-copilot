@@ -70,6 +70,36 @@ REQUIRED_FOR_COPY = [
 
 _STATUS_ENUM = {"报名中", "已结束", "待确认"}
 
+# 中文数字：期次常写成「第十五期」，要能转成 15，用来给记录换编号
+_CN_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def session_number(label: Any) -> Optional[int]:
+    """从期次文字里取出编号：「第十六期」→16，「第9期」→9，「二十一期」→21。
+
+    认不出就返回 None —— 宁可返回 None 让上层保留旧编号，
+    也不要瞎猜一个数字（编号错了会串期，串期比没有编号麻烦得多）。
+    """
+    s = str(label or "").strip()
+    if not s:
+        return None
+    m = re.search(r"\d+", s)
+    if m:
+        return int(m.group())
+    m = re.search(r"([零一二两三四五六七八九十]+)", s)
+    if not m:
+        return None
+    z = m.group(1)
+    if "十" not in z:
+        return _CN_DIGITS.get(z) if len(z) == 1 else None
+    head, _, tail = z.partition("十")
+    if (head and head not in _CN_DIGITS) or (tail and tail not in _CN_DIGITS):
+        return None
+    tens = _CN_DIGITS[head] if head else 1
+    ones = _CN_DIGITS[tail] if tail else 0
+    return tens * 10 + ones
+
 
 # ---------------------------------------------------------------- 基础读写
 def load() -> Dict[str, Any]:
@@ -100,6 +130,28 @@ def _backup() -> str:
 def _write(kb: Dict[str, Any]) -> None:
     with open(config.DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(kb, f, ensure_ascii=False, indent=2)
+
+
+def _archive_record(record: Dict[str, Any], reason: str) -> str:
+    """把要被整条替换掉的记录追加进归档（一行一条，只往后加，不改旧行）。
+
+    为什么单独存一份而不是只靠 _backup()：
+        备份是整个文件的快照，几十份叠在一起几乎没法翻。
+        这里是「某一条被替换了」的结构化流水，出问题能直接 grep 到是哪一期。
+
+    目录用 DATA_DIR 现算，不要提成模块常量 —— 测试会把 DATA_DIR 指到临时目录，
+    用常量就会写回真实数据（这个坑踩过）。
+    """
+    path = DATA_DIR / "archive" / "superseded.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    item = {
+        "superseded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "reason": reason,
+        "record": record,
+    }
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(item, ensure_ascii=False) + "\n")
+    return str(path)
 
 
 # ---------------------------------------------------------------- 校验
@@ -162,12 +214,24 @@ def set_article_pointer(rel: str) -> bool:
 
 
 # ---------------------------------------------------------------- 对外接口
-def update_activity(activity_id: Optional[str], updates: Dict[str, Any]) -> Dict[str, Any]:
+def update_activity(activity_id: Optional[str], updates: Dict[str, Any],
+                    replace: bool = False, keep_article: bool = True) -> Dict[str, Any]:
     """更新**当前活动**的字段。
 
     存储模型是单活动：文件里只有一条，就是正在办的那一期。
     所以 activity_id 只是为了兼容旧调用和日志，实际一律写那一条 ——
     传进来的期次和文件里的对不上，说明模型带了过期的 id，以文件为准。
+
+    两种写模式（这是真实报过的 bug 之后加的，不要改回一种）：
+      · 合并（replace=False，默认）
+            只覆盖这次给的字段，其余保持不动。适用于「同一期的信息补充或更正」，
+            比如客服说「集合点改到五教104」。
+      · 整条替换（replace=True）
+            以一条空白记录为底，**只保留这次抽到的字段**，没抽到的一律清空。
+            适用于「客服粘进来的是另一期的推文」。
+            为什么必须清空：不清理的话，新一期会继承上一期的集合点、名额、室内外、
+            分组这些推文里没写的东西，客服照着答家长就是答错一期的事。
+            旧记录先整条进 archive/superseded.jsonl，不做静默丢弃。
 
     设计要点：
       · 只接受白名单字段，未知字段直接拒绝并在返回里列出
@@ -206,16 +270,51 @@ def update_activity(activity_id: Optional[str], updates: Dict[str, Any]) -> Dict
         return {"ok": False, "error": "没有可写入的字段", "rejected": rejected}
 
     backup_path = _backup()
-    target.update(accepted)
-    target["_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    archive_path = ""
+    dropped: List[str] = []
+
+    if replace:
+        old = dict(target)
+        archive_path = _archive_record(
+            old, reason=f"整条替换为 {accepted.get('session_label') or '新一期'}")
+        # 从空白开始：只有 id / article / 这次抽到的字段，别的一概不继承
+        new: Dict[str, Any] = {}
+        if old.get("id"):
+            new["id"] = old["id"]
+        if keep_article and old.get("article"):
+            new["article"] = old["article"]
+        new.update(accepted)
+
+        no = session_number(new.get("session_label"))
+        if no is not None:
+            new["session_no"] = no
+            new["id"] = f"S{no:02d}"
+        # 期次没写或认不出 → id 沿用旧的：编号错会串期，串期比没编号麻烦得多
+
+        new.setdefault("status", "待确认")
+        new["_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        new["_replaced_from"] = str(old.get("session_label") or old.get("id") or "")
+        new["_replaced_at"] = new["_last_updated"]
+
+        dropped = sorted(k for k in old
+                         if k not in new and k not in ("id", "article"))
+        kb["activities"] = [new]
+        target = new
+    else:
+        target.update(accepted)
+        target["_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+
     _write(kb)
 
     return {
         "ok": True,
-        "activity_id": key,
+        "activity_id": target.get("id") or key,
+        "replaced": replace,
         "updated_fields": list(accepted.keys()),
         "rejected_fields": rejected,
+        "dropped_fields": dropped,
         "backup": backup_path,
+        "archive": archive_path,
         "still_missing": missing_fields(target),
         "note": (
             "已写入并备份。请把 still_missing 里的项目告诉客服，"

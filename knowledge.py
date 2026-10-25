@@ -1,4 +1,4 @@
-﻿"""
+"""
 知识装配层：把「当前活动」需要知道的全部资料拼成一段上下文
 
 为什么要有这一层（这是 v3 架构的核心）
@@ -27,6 +27,7 @@ v2 的做法是「问一句 → 猜该查什么 → 调工具」。它依赖两�
 """
 
 import json
+import re
 import shutil
 import time
 from typing import Any, Dict, List, Optional
@@ -123,6 +124,29 @@ def save_article(text: str, activity: Optional[Dict[str, Any]] = None) -> str:
         bak = config.DATA_DIR / "backups" / f"article.{time.strftime('%Y%m%d-%H%M%S')}.md"
         bak.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, bak)
+    path.write_text(text, encoding="utf-8")
+    return rel
+
+
+def archive_article(label: str = "", activity: Optional[Dict[str, Any]] = None) -> str:
+    """把**当前这一期**的推文原文按「期次」名字存进 archive/。
+
+    为什么不能只靠 save_article 的自动备份：
+        current.md 这个文件名不带期次，备份文件名又是时间戳。
+        换了一期之后想找回上一期的推文，得一个个打开备份猜。
+        这里直接存成 archive/article_第十六期.md，一眼就能找到。
+
+    返回相对路径（没内容就返回空串）。
+    """
+    act = activity if activity is not None else get_activity()
+    text = load_article(act)
+    if not text.strip():
+        return ""
+    name = str(label or (act or {}).get("session_label") or (act or {}).get("id") or "past")
+    safe = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "_", name).strip("_") or "past"
+    rel = f"archive/article_{safe[:40]}.md"
+    path = config.DATA_DIR / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return rel
 
