@@ -94,7 +94,22 @@ def grade(case: dict, result: dict) -> dict:
             bad.append(m.group(0))
     checks["clean_ok"] = not bad
 
-    # 5) 长度（只在用例声明了 max_len 时生效）
+    # 5) 口吻：产出的是「客服可以发给家长的话」，不许夹带系统腔
+    #    这条是硬约束。真实翻车过：答「报名二维码在客服这边…我让客服把二维码发您」——
+    #    读这句话的人就是客服，等于让客服去找客服。家长也不会看见系统、资料库、界面这些词。
+    #    「自我认知」那类用例是客服在问工具本身，允许直说，跳过。
+    _META = ["资料库", "知识库", "数据库", "界面", "面板", "右侧",
+             "我让客服", "我这边看不到", "系统里"]
+    # 客服在问「工具本身」的（还缺什么、你看得到推文吗），本来就是对她说话，
+    # 允许出现系统视角；家长问题则一律不许。
+    is_meta = case.get("category") == "自我认知" or case.get("voice") == "meta"
+    if is_meta:
+        checks["voice_ok"] = True
+    else:
+        leaked = [w for w in _META if w in answer]
+        checks["voice_ok"] = not leaked
+
+    # 6) 长度（只在用例声明了 max_len 时生效）
     #    文案类需求里长度是硬要求：朋友圈超过 6 行会被折叠成「全文」，家长根本不会点开。
     #    光断言「有没有说到要点」抓不到「写太长」这种错，所以单列一维。
     cap = case.get("max_len")
@@ -152,6 +167,8 @@ def main() -> None:
                         reason = f"未命中任一正确说法 {case.get('must_contain_any')}"
                     elif dim == "clean_ok":
                         reason = f"出现不该有的内容 {g['bad_hits']}"
+                    elif dim == "voice_ok":
+                        reason = f"夹带系统腔 {[w for w in ['资料库','知识库','界面','面板','右侧','我让客服','我这边看不到','系统里'] if w in g['answer']]}"
                     elif dim == "len_ok":
                         reason = f"太长：{len(g['answer'])} 字，上限 {case.get('max_len')}"
                     print(f"        └─ {dim}: {reason}")
@@ -170,10 +187,10 @@ def main() -> None:
     print(f"总通过率：{passed}/{total} = {passed / total * 100:.1f}%")
     print(f"总耗时：{elapsed:.1f}s    总 tokens：{tokens}")
 
-    dims = ["tool_ok", "facts_ok", "any_ok", "clean_ok", "len_ok"]
+    dims = ["tool_ok", "facts_ok", "any_ok", "clean_ok", "voice_ok", "len_ok"]
     labels = {"tool_ok": "路径选对", "facts_ok": "关键事实齐全",
               "any_ok": "命中正确说法", "clean_ok": "无编造/错误口径",
-              "len_ok": "长度合规"}
+              "voice_ok": "可直接发家长", "len_ok": "长度合规"}
     print()
     for d in dims:
         ok = sum(1 for r in results if r["checks"][d])

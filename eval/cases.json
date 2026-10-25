@@ -245,7 +245,8 @@
    "must_contain_any": [
     "集合地点",
     "集合时间"
-   ]
+   ],
+   "voice": "meta"
   },
   {
    "id": "Q21",
@@ -290,10 +291,12 @@
    "expect_tool": null,
    "must_contain": [],
    "must_contain_any": [
+    "确认",
     "没有",
     "不清楚",
     "未",
-    "负责人"
+    "负责人",
+    "没写"
    ],
    "must_not_contain": [
     "老师姓",
@@ -309,6 +312,7 @@
    "expect_tool": null,
    "must_contain": [],
    "must_contain_any": [
+    "确认",
     "没有",
     "不清楚",
     "无法",
