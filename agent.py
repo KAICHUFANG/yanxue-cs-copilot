@@ -131,12 +131,19 @@ C. question —— 在问问题
 · 只给了一个词或一个值、没有疑问语气 → update
 · 有否定或条件时，先正确理解含义再定值：
   「不是室内」→ 室外；「如果下雨就转室内」→ 这不是在改活动属性，按 question 处理
+· **粘贴了一大段推文/公告原文**（里面有活动名、时间、地点、名额、费用等一条条具体信息）
+  → 一律 update，把这些字段抽出来。**不要因为里面有「招募」两个字就当成 copy 去写文案**
 · 「推广」「招募」「拉人」「朋友圈」「引流」「私域」→ 一律 copy + promo
-· 「欢迎语」「群公告」「活动提醒」「结束感谢」→ copy + template
+  （前提是她在**要一段文案**，不是在**贴一份资料**）
+· 「欢迎语」「群公告」「活动提醒」「结束感谢」→ copy + template，stage 填对应的那一段
+· 只说「活动群文案」「群文案」「整个群的通知」但没说哪一段 → copy + template，
+  **stage 填「全部」**（客服要的就是全流程，不要反问）
 · 只说「写个文案」「来段文案」而没说清是活动群通知还是推广 → copy，但 **copy_type 留空**，
   让程序去反问客服，不要替她猜
 · 拿不准的时候选 question（宁可多问一句，也不要乱写库）
 · 只抽客服**明确说过**的字段，没说的一律不要填，不要编「校门口」「上午」这种默认值
+· 客服只报了字段名、没给内容（「集合地点」「名额」）→ 不要当成 update，
+  按 question 处理，并反问她要填什么
 
 可选字段（只能用这些键名）：
 __FIELDS__
@@ -148,7 +155,12 @@ __FIELDS__
 · 其余是字符串
 
 只输出 JSON：
-{"kind": "update" | "copy" | "question", "copy_type": "template" | "promo"（仅 copy 时用）, "stage": "欢迎语/活动提醒/出发提醒/结束感谢（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
+{"kind": "update" | "copy" | "question", "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语/活动提醒/出发提醒/结束感谢；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
+
+promo_channel 怎么填：
+· 提到「朋友圈」「盆友圈」「pyq」「圈里」「动态」→ moments
+· 提到「群」「私域」「家长群」「发到群里」或没说清 → group
+· 「推广文案」「招募文案」但没指定渠道 → group
 """
 
 # 文案阶段 → group_messages.json 里 timeline 的圈号。
@@ -196,9 +208,13 @@ def classify_input(question: str, activity_id: Optional[str] = None) -> Dict[str
     copy_type = data.get("copy_type")
     if copy_type not in ("template", "promo"):
         copy_type = ""
+    channel = data.get("promo_channel")
+    if channel not in ("group", "moments"):
+        channel = "group"          # 没说清就是发群
     return {
         "kind": kind,
         "copy_type": copy_type,
+        "promo_channel": channel,
         "updates": data.get("updates") if isinstance(data.get("updates"), dict) else {},
         "stage": data.get("stage") or "",
         "reason": data.get("reason", ""),
@@ -207,14 +223,32 @@ def classify_input(question: str, activity_id: Optional[str] = None) -> Dict[str
 
 
 # ---------------------------------------------------------------- 写入
+def _field_words() -> set:
+    """字段名本身（含常见叫法）。用来识别「把字段名当值写进去」这种错误。"""
+    words = set()
+    for k, desc in store.ALLOWED_FIELDS.items():
+        words.add(k)
+        words.add(desc.split("，")[0].split("（")[0].strip())
+    words |= {"室内室外", "室内/室外", "是否分组", "分组吗", "每组几个人"}
+    return {w for w in words if w}
+
+
 def _valid_updates(updates: Dict[str, Any]):
-    """代码只做校验：字段必须在白名单里。判断归模型，纪律归代码。"""
+    """代码只做校验：字段必须在白名单里，值不能是字段名本身。判断归模型，纪律归代码。
+
+    第二条是真踩过的坑：客服只打了「集合地点」四个字，模型抽成
+    {meeting_point: "集合地点"} 并写进了库——把字段名当成了字段值。
+    这类错误一眼能看出是垃圾数据，让代码挡掉，不要指望模型每次都识别对。
+    """
+    field_words = _field_words()
     good, bad = {}, []
     for k, v in (updates or {}).items():
         if k not in store.ALLOWED_FIELDS:
             bad.append(f"未知字段 {k}")
         elif v in _EMPTY:
             bad.append(f"{k} 是空值")
+        elif str(v).strip() in field_words:
+            bad.append(f"{k} 收到的是字段名「{v}」，不是具体内容")
         else:
             good[k] = v
     return good, bad
@@ -301,19 +335,20 @@ STAGE_NAMES = "① 拉群欢迎语　② 进校预约提醒　③ 活动提醒�
 
 # 推广文案：这类不是定稿，本来就是要「写」，所以交给模型。
 # 但事实必须来自资料——不能让模型自己编优惠、编名额紧张。
-_PROMO_SYSTEM = """你在给「山海科普研学」写**私域群推广文案**：发到别的家长群或朋友圈，
-目的是吸引家长报名参加这一期活动。
-
-事实只能用【资料】里有的：活动名、主题、时间、地点、招募对象、名额、价格、费用包含、活动环节与亮点。
+# 推广文案的**共同约束**：事实只能用资料里有的。写法和长度按渠道分。
+_PROMO_FACTS = """事实只能用【资料】里有的：活动名、主题、时间、地点、招募对象、名额、价格、费用包含、活动环节与亮点。
 
 **严禁编造**：
 · 不写资料里没有的优惠、赠品、折扣、早鸟价
 · 不写「仅剩X个名额」「最后一天」这类紧迫感，除非资料明确写了名额上限（那就照实说「25人报满即止」）
 · 不写往期好评、获奖、合作机构、老师头衔
 · 不写进校预约、集合点这些**报名之后**才需要的信息
+"""
 
-要求：
-· 每版 150-250 字，口语化，像家长之间真心推荐，不要像广告
+# 微信群：屏幕能滚，可以分点讲清楚，家长会认真读完
+_PROMO_GROUP = "你在给「山海科普研学」写**微信群推广文案**：发到别的家长群里，吸引报名。\n\n" + _PROMO_FACTS + """
+写法要求：
+· **每版 150-250 字**，口语化，像家长之间真心推荐，不要像广告
 · 开头一句钩子；中间 2-3 个具体卖点，必须用活动里真实的环节，不要写「寓教于乐」这种空话
 · 结尾引导：看推文扫码报名 / 私信我
 · 给两版：先写「A 稳重版」，再写「B 活泼版」
@@ -321,14 +356,35 @@ _PROMO_SYSTEM = """你在给「山海科普研学」写**私域群推广文案**
 直接输出两版文案，不要解释，不要写「以下是」。
 """
 
+# 朋友圈：超过 6 行会被折叠成「全文」，所以必须短，而且不要分点排版
+_PROMO_MOMENTS = "你在给「山海科普研学」写**朋友圈文案**：发在自己的朋友圈，吸引家长报名。\n\n" + _PROMO_FACTS + """
+写法要求（朋友圈有硬限制，必须遵守）：
+· **每版 60-100 字，最多 5 行**。超过 6 行会被折叠成「全文」，家长根本不会点开
+· **不要分点、不要小标题、不要罗列**。朋友圈是一段话，不是公告
+· 结构就用三句：一句钩子 + 一句具体信息（时间、对象、价格挑一两个说，不要全塞）+ 一句行动（扫码看推文 / 私信我）
+· 可以用 1-2 个表情，不要堆
+· 给两版：先写「A 简洁版」，再写「B 亲切版」
 
-def write_promo(question: str, activity_id: Optional[str] = None) -> Dict[str, Any]:
-    """生成推广/招募文案。事实来自资料，写法由模型发挥。"""
+直接输出两版，不要解释，不要写「以下是」。
+"""
+
+_PROMO_BY_CHANNEL = {"moments": _PROMO_MOMENTS, "group": _PROMO_GROUP}
+
+
+def write_promo(question: str, activity_id: Optional[str] = None,
+                channel: str = "group") -> Dict[str, Any]:
+    """生成推广/招募文案。事实来自资料，写法和长度按渠道定。
+
+    channel:
+        group   微信群 —— 150-250 字，可以分点
+        moments 朋友圈 —— 60-100 字、最多 5 行，超过 6 行会被折叠
+    """
     ctx = knowledge.build_context(activity_id)
+    system = _PROMO_BY_CHANNEL.get(channel, _PROMO_GROUP)
     resp = _client.chat.completions.create(
         model=config.MODEL,
         messages=[
-            {"role": "system", "content": _PROMO_SYSTEM},
+            {"role": "system", "content": system},
             {"role": "user", "content": f"【资料】\n{ctx}\n\n【客服要求】\n{question}"},
         ],
         temperature=config.TEMPERATURE,
@@ -431,10 +487,15 @@ def answer_chat(
 
         # B2 推广/招募文案：没有定稿模板，交给模型写（事实仍取自资料）
         if decided["copy_type"] == "promo":
-            return done(write_promo(question, aid))
+            return done(write_promo(question, aid, decided["promo_channel"]))
 
         # B1 活动群定稿：代码填模板，原文输出
-        text = render_copy(decided["stage"], all_when_empty=False)
+        # 「全部」= 客服要整个流程的通知，5 个阶段都给；
+        # 认不出的阶段才反问，避免「要推广却吐出欢迎语」那种答非所问。
+        if "全部" in (decided["stage"] or ""):
+            text = render_copy("", all_when_empty=True)
+        else:
+            text = render_copy(decided["stage"], all_when_empty=False)
         if not text:
             # 认不出是哪个阶段 —— 宁可反问，也不要把 5 个阶段全吐出来
             out = {"answer": f"活动群文案分这几个阶段，你要哪一段？\n{STAGE_NAMES}\n"

@@ -94,6 +94,12 @@ def grade(case: dict, result: dict) -> dict:
             bad.append(m.group(0))
     checks["clean_ok"] = not bad
 
+    # 5) 长度（只在用例声明了 max_len 时生效）
+    #    文案类需求里长度是硬要求：朋友圈超过 6 行会被折叠成「全文」，家长根本不会点开。
+    #    光断言「有没有说到要点」抓不到「写太长」这种错，所以单列一维。
+    cap = case.get("max_len")
+    checks["len_ok"] = (not cap) or len(answer) <= cap
+
     return {
         "checks": checks,
         "passed": all(checks.values()),
@@ -146,6 +152,8 @@ def main() -> None:
                         reason = f"未命中任一正确说法 {case.get('must_contain_any')}"
                     elif dim == "clean_ok":
                         reason = f"出现不该有的内容 {g['bad_hits']}"
+                    elif dim == "len_ok":
+                        reason = f"太长：{len(g['answer'])} 字，上限 {case.get('max_len')}"
                     print(f"        └─ {dim}: {reason}")
 
     elapsed = time.time() - t0
@@ -162,9 +170,10 @@ def main() -> None:
     print(f"总通过率：{passed}/{total} = {passed / total * 100:.1f}%")
     print(f"总耗时：{elapsed:.1f}s    总 tokens：{tokens}")
 
-    dims = ["tool_ok", "facts_ok", "any_ok", "clean_ok"]
-    labels = {"tool_ok": "工具选对", "facts_ok": "关键事实齐全",
-              "any_ok": "命中正确说法", "clean_ok": "无编造/错误口径"}
+    dims = ["tool_ok", "facts_ok", "any_ok", "clean_ok", "len_ok"]
+    labels = {"tool_ok": "路径选对", "facts_ok": "关键事实齐全",
+              "any_ok": "命中正确说法", "clean_ok": "无编造/错误口径",
+              "len_ok": "长度合规"}
     print()
     for d in dims:
         ok = sum(1 for r in results if r["checks"][d])
