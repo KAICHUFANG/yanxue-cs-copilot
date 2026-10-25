@@ -111,6 +111,16 @@ def grade(case: dict, result: dict) -> dict:
         leaked = [w for w in _META if w in answer]
         checks["voice_ok"] = not leaked
 
+    # 7) 客气度：家长问题的回答里必须用「您」称呼，且不出现单独的「你」。
+    #    这是客服的基本礼貌，也是「这是客服要发出去的话」的直接体现。
+    #    只查问答路径（trace 里有 <context>），文案和 meta 问答不查。
+    is_qa = "<context>" in trace
+    if is_meta or not is_qa or "各位家长" in answer:
+        # 群公告体（各位家长…）是整群通知的语气，不适用「您」，不算不客气
+        checks["polite_ok"] = True
+    else:
+        checks["polite_ok"] = ("您" in answer) and not _re.search(r"你(?!们)", answer)
+
     # 6) 长度（只在用例声明了 max_len 时生效）
     #    文案类需求里长度是硬要求：朋友圈超过 6 行会被折叠成「全文」，家长根本不会点开。
     #    光断言「有没有说到要点」抓不到「写太长」这种错，所以单列一维。
@@ -171,6 +181,8 @@ def main() -> None:
                         reason = f"出现不该有的内容 {g['bad_hits']}"
                     elif dim == "voice_ok":
                         reason = f"夹带系统腔 {[w for w in ['资料库','知识库','界面','面板','右侧','我让客服','我这边看不到','客服那边'] if w in g['answer']]}"
+                    elif dim == "polite_ok":
+                        reason = "家长问题里没有出现「您」，或用了「你」"
                     elif dim == "len_ok":
                         reason = f"太长：{len(g['answer'])} 字，上限 {case.get('max_len')}"
                     print(f"        └─ {dim}: {reason}")
@@ -189,10 +201,10 @@ def main() -> None:
     print(f"总通过率：{passed}/{total} = {passed / total * 100:.1f}%")
     print(f"总耗时：{elapsed:.1f}s    总 tokens：{tokens}")
 
-    dims = ["tool_ok", "facts_ok", "any_ok", "clean_ok", "voice_ok", "len_ok"]
+    dims = ["tool_ok", "facts_ok", "any_ok", "clean_ok", "voice_ok", "polite_ok", "len_ok"]
     labels = {"tool_ok": "路径选对", "facts_ok": "关键事实齐全",
               "any_ok": "命中正确说法", "clean_ok": "无编造/错误口径",
-              "voice_ok": "可直接发家长", "len_ok": "长度合规"}
+              "voice_ok": "可直接发家长", "polite_ok": "称呼客气", "len_ok": "长度合规"}
     print()
     for d in dims:
         ok = sum(1 for r in results if r["checks"][d])

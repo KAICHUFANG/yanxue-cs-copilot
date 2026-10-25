@@ -59,6 +59,9 @@ _CTX_SYSTEM = """你是「山海科普研学」的客服助手。
 · 需要客服亲手做的事（发报名二维码、发公众号名片、发导航照片）**不要写进正文**：
   正文里客服本来就会发。要提醒客服别忘了，交给「客服提示」那一栏，不归你管
 · 一到三句，先给结论，不要罗列
+· **时间一律用 24 小时制照抄**（15:00-18:00），不要写成「下午3点到6点」——家长分不清是早上还是晚上
+· **不要整段贴群公告**。公告体（「各位家长请知悉」「请各位家长放心」那种）是发群用的，
+  不是一对一回答家长的语气；要引公告内容就用客服的口语转述。群公告留在「生成文案」那条路上
 · 但**家长问「怎么做」时，步骤必须讲清楚**（怎么进校预约、怎么报名、怎么去、要带什么），
   不能只回一句「到时候我在群里发」——她问的就是现在要怎么做
 · 就算现在还不能操作（例如进校预约只能在活动前一天和当天开窗），**也要先把步骤讲清**，
@@ -93,7 +96,27 @@ _CTX_SYSTEM = """你是「山海科普研学」的客服助手。
 家长说找不到推文或扫不出来 → 「我发您一份」。
 不要说「二维码只有客服有」——二维码就在推文里，家长自己就能扫。
 
-中文口语化，像熟悉的团队伙伴。"""
+## 语气：客气，但不油腻
+客服是在**服务**家长，不是求人，也不是发通知。
+
+· **称呼是硬要求**：每条回复里至少出现一次「您」指代家长，哪怕只是一句告知也要带；
+  一律不用「你」（「你们」也改成「您和孩子」）
+  ✗ 集合点每期不一样，这一期还没定
+  ✓ 集合点每期不一样，这一期还没定，定了我第一时间发您
+· 收口不是每句都要。**只有这三种情况加一句**：
+  要家长做决定（「您看要不要先定下来」）、要拒绝（「还请您理解」）、有不确定（「我确认好回您」）
+  纯粹告知事实的（集合点在哪、带什么东西），说清楚就行，不用硬加客套话
+· 要加就换着说，别每条都用同一句
+· 陈述也要有温度：
+  ✗ 这一期还没定，定了群里发
+  ✓ 这一期还没定，定了我第一时间在群里发您
+· 要拒绝时，先说原因再给替代，不要只丢一个「不行」：
+  ✗ 不代订酒店
+  ✓ 酒店这块我们暂时没有这项服务，得您自己安排；活动是自驾到海大，您订学校附近会方便些
+· 语气词（哈／呢／啦）一条最多两处，堆多了显得不专业
+· **不许为了客气把话说糊**：还没定就说还没定，不要用「我再帮您确认一下哦」把不确定藏起来
+
+中文口语化，像熟悉的团队伙伴，客气但不客套。"""
 
 
 def answer_ctx(question: str, activity_id: Optional[str] = None,
@@ -257,6 +280,62 @@ def classify_input(question: str, activity_id: Optional[str] = None) -> Dict[str
         "reason": data.get("reason", ""),
         "usage": _usage(resp.usage),
     }
+
+
+_POLISH_SYSTEM = """把下面这段话改成「客服对家长说话」的客气语气。
+
+只做两件事：
+1. 用「您」称呼家长，至少出现一次；不出现「你」（「你们」改成「您和孩子」）
+2. 语气稍微软一点
+
+**严禁改动任何内容**：
+· 所有数字、时间、价格、日期必须**逐字照抄**（「18:00」不能写成「6点」，「88元」不能写成「八十八元」）
+· 结论、条款、允许/禁止的口径一个字都不能变
+· 不许加内容、不许减内容、不许加新的承诺
+
+直接输出改好的整段，不要解释。
+"""
+
+
+def _num_tokens(s: str):
+    """抽出所有数字，用来校验重写有没有动事实。"""
+    return sorted(re.findall(r"\d+(?:[:：.]\d+)?", s or ""))
+
+
+def _ensure_polite(answer: str) -> str:
+    """家长话术必须有「您」。不达标就补，但绝不允许改动事实。
+
+    为什么要有这一层：提示词写了「每条至少一次您」，实测仍会漏六分之一
+    （一句话就能答完的问题最容易省掉称呼）。语气是客服的脸面，不能靠概率。
+
+    但「整段重写」很危险——实测它把「18:00」改成了「6点」。
+    所以重写后要拿数字指纹对一遍：数字变了就判定不可信，
+    退回最保守的做法——正文一个字不动，只在末尾追加一句客气话。
+    """
+    if not answer:
+        return answer
+    # 群公告体是「各位家长」开头，本来就不该逐个人称，不能硬塞「您」
+    if "各位家长" in answer:
+        return answer
+    if "您" in answer and not re.search(r"你(?!们)", answer):
+        return answer
+
+    before = _num_tokens(answer)
+    try:
+        resp = _client.chat.completions.create(
+            model=config.MODEL,
+            messages=[{"role": "system", "content": _POLISH_SYSTEM},
+                      {"role": "user", "content": answer}],
+            temperature=0,
+        )
+        fixed = (resp.choices[0].message.content or "").strip()
+    except Exception:
+        fixed = ""
+
+    if fixed and "您" in fixed and _num_tokens(fixed) == before:
+        return fixed
+    # 重写动了数字 / 还是没加「您」→ 放弃重写，只追一句称呼，正文原样保留
+    return answer.rstrip() + "\n\n您还有想了解的吗？随时问我。"
 
 
 # ---------------------------------------------------------------- 写入
@@ -559,6 +638,7 @@ def answer_chat(
             return done(out)
         # 抽到的字段全不合法 → 当提问处理，同时把被拒原因带出去
         out = answer_ctx(question, aid, history, stream_cb=stream_cb)
+        out["answer"] = _ensure_polite(out["answer"])
         out["write_errors"] = bad
         return done(out)
 
@@ -599,4 +679,6 @@ def answer_chat(
         return done({"answer": text, "trace": ["classify", "render_group_messages"]})
 
     # ---- question ----
-    return done(answer_ctx(question, aid, history, stream_cb=stream_cb))
+    out = answer_ctx(question, aid, history, stream_cb=stream_cb)
+    out["answer"] = _ensure_polite(out["answer"])
+    return done(out)
