@@ -62,24 +62,27 @@ _CTX_SYSTEM = """你是「山海科普研学」的家长咨询助手，同时也
 
 **回复要短**：一到三句，先给结论。缺口由界面右侧实时显示，不要在回复里罗列缺项。
 
-## 你手上有什么（被问「你看得到推文吗」时照这个答，别含糊）
+## 你手上有什么（被问到就照实说，别含糊）
+
+· **这一期的推文原文（全文）** —— 活动定位、活动内容、环节机制、研学收获、专业支持、
+  费用与退费、自备物品、报名方式，全在里面
+· **一组固定字段** —— 价格档位、名额、日期时段、地点、集合地点与时间、招募对象、
+  参与形式、室内外、是否分组、每组人数、费用包含
 
 你**没有**：
-· 推文原文的完整文字
-· 推文里的图片 —— 报名二维码、联系电话都是图片，所以你确实没有报名链接
+· 推文里的图片 —— 报名二维码和联系电话在原文里是图片，所以你确实没有报名链接
 · 家长名单
 
-你**有**：这一期从推文里整理出来的结构化资料，包括
-活动名与主题、日期与时段、地点、招募对象与参与形式、价格档位与费用包含、
-**四个活动环节与机制、奖项、研学收获**、名额、集合地点与集合时间。
+**两处说法冲突时，按这个优先级**：
+· 价格、名额、日期时段、集合点、室内外、分组、每组人数 → 以「固定字段」为准（客服可能更新过）
+· 环节、机制、奖项、收获、活动定位、报名方式、退费规则、自备物品 → 以推文原文为准
 
-所以被问「能不能看到推文」时，正确答法是：
-「推文原文和图片我看不到，但这一期的内容包括环节、机制、奖项、价格名额我这儿都有，
-  你问具体内容我能答。」
-**不要只说「我只有这一期的资料」就收尾** —— 那听起来像对活动一无所知，实际上不是。
+被问「能不能看到推文」时，正确答法是：
+「推文全文我这儿有，图片看不到——报名二维码和电话在原文里是图。」
+不要答成「看不到推文」，也不要只说「我只有资料」。
 
-被问「你这些信息哪来的」「你怎么知道」时，答：
-这是团队从当期推文里整理进资料库的，推文来源是公众号「和美山海」。
+被问「你这些信息哪来的」时，答：活动内容来自这一期的推文原文（公众号「和美山海」），
+价格名额这些固定信息是团队核对过的字段。
 
 中文口语化，像熟悉的团队伙伴。"""
 
@@ -173,8 +176,13 @@ __FIELDS__
 · grouping 用「分组」或「不分组」；group_size 用「4-5人」这类短语
 · 其余是字符串
 
+另外单独判断一个开关 is_article：
+· true = 客服**粘进来一篇文章/推文/公告原文**（几百字以上，是叙述性文章，
+  有小标题、有段落、讲活动是干什么的）
+· false = 其他所有情况
+
 只输出 JSON：
-{"kind": "update" | "copy" | "question", "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语/活动提醒/出发提醒/结束感谢；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
+{"kind": "update" | "copy" | "question", "is_article": true | false, "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语/活动提醒/出发提醒/结束感谢；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
 
 promo_channel 怎么填：
 · 提到「朋友圈」「盆友圈」「pyq」「圈里」「动态」→ moments
@@ -232,6 +240,7 @@ def classify_input(question: str, activity_id: Optional[str] = None) -> Dict[str
         channel = "group"          # 没说清就是发群
     return {
         "kind": kind,
+        "is_article": bool(data.get("is_article")),
         "copy_type": copy_type,
         "promo_channel": channel,
         "updates": data.get("updates") if isinstance(data.get("updates"), dict) else {},
@@ -274,7 +283,7 @@ def _valid_updates(updates: Dict[str, Any]):
 
 
 def _confirm_written(question: str, updates: Dict[str, Any],
-                     ok: bool, err: str) -> Dict[str, Any]:
+                     ok: bool, err: str, extra: str = "") -> Dict[str, Any]:
     """写完（或写失败）之后，让模型用一句人话回复客服。
 
     注意：**不把缺项清单喂进去**。
@@ -291,7 +300,9 @@ def _confirm_written(question: str, updates: Dict[str, Any],
              "你在回复客服（不是家长）。用一到两句话说明这次录入的结果。\n"
              "写成功就简短确认写了什么；写失败就说清为什么。\n"
              "**不要罗列还缺哪些字段**，界面右侧有实时面板，重复一遍只会干扰。"},
-            {"role": "user", "content": f"客服说的话：{question}\n\n系统实际情况：\n{prefix}{note}"},
+            {"role": "user", "content": ("客服说的话：" + question
+                                        + "\n\n系统实际情况：\n" + prefix + note
+                                        + (("\n" + extra) if extra else ""))},
         ],
         temperature=0,
     )
@@ -468,6 +479,7 @@ def answer_chat(
         """统一收尾：合并 usage、补齐字段、顺手给流式界面回填整段。"""
         out["usage"] = _merge(total, out.get("usage") or {})
         out.setdefault("wrote", [])
+        out.setdefault("article_saved", "")
         out.setdefault("write_errors", [])
         out.setdefault("missing", store.missing_fields(knowledge.get_activity(aid) or {}))
         # 只有 question 那条路是真流式；其余一次性结果在这里整段回调一次，
@@ -475,6 +487,16 @@ def answer_chat(
         if stream_cb is not None and (out.get("trace") or [""])[-1] != "<context>":
             stream_cb(out["answer"])
         return out
+
+    # ---- 粘进来一篇推文：先整篇存原文，再抽固定字段 ----
+    # 原文不拆字段（推文是叙述文字，拆了必丢东西），只有固定字段进库。
+    article_saved = ""
+    if decided.get("is_article") and len(question) > 200:
+        rel = knowledge.save_article(question)
+        store.set_article_pointer(rel)
+        article_saved = rel
+        if verbose:
+            print(f"  📄 推文原文已存：{rel}（{len(question)} 字）")
 
     # ---- update ----
     if decided["kind"] == "update" and decided["updates"]:
@@ -485,9 +507,13 @@ def answer_chat(
             res = write_updates(good)
             ok = bool(res.get("ok"))
             err = "" if ok else str(res.get("error") or res)
-            out = _confirm_written(question, good, ok, err)
+            out = _confirm_written(
+                question, good, ok, err,
+                extra=(f"整篇推文原文也已存档（{article_saved}），"
+                       f"以后问活动内容直接读原文，不用再拆字段" if article_saved else ""))
             out["wrote"] = sorted(good) if ok else []
             out["write_errors"] = [] if ok else [err]
+            out["article_saved"] = article_saved
             return done(out)
         # 抽到的字段全不合法 → 当提问处理，同时把被拒原因带出去
         out = answer_ctx(question, aid, history, stream_cb=stream_cb)

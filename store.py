@@ -49,10 +49,6 @@ ALLOWED_FIELDS: Dict[str, str] = {
     "fee_includes": "费用包含项，字符串列表",
     "insurance": "保险说明",
     "dress_code": "着装要求",
-    "segments": "活动环节，列表，每项含 name 与 detail",
-    "highlights": "活动亮点，字符串列表",
-    "awards": "奖项，字符串列表",
-    "learning_outcomes": "研学收获，字符串列表",
 }
 
 # 对外发文案前必须具备的字段（缺了就会在文案里留下 {{}}，或者答不上家长的问题）
@@ -135,15 +131,9 @@ def _validate_one(field: str, value: Any) -> Tuple[bool, str]:
                 float(t["price"])
             except (TypeError, ValueError):
                 return False, "价格档位里的 price 必须是数字"
-    elif field in ("fee_includes", "highlights", "awards", "learning_outcomes"):
+    elif field == "fee_includes":
         if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
-            return False, f"{field} 必须是字符串列表"
-    elif field == "segments":
-        if not isinstance(value, list):
-            return False, "segments 必须是列表"
-        for s in value:
-            if not isinstance(s, dict) or "name" not in s:
-                return False, "每个活动环节都要有 name 字段"
+            return False, "fee_includes 必须是字符串列表"
     return True, ""
 
 
@@ -156,6 +146,19 @@ def missing_fields(activity: Dict[str, Any]) -> List[Dict[str, str]]:
         if v in (None, "", [], {}):
             missing.append({"field": field, "label": label})
     return missing
+
+
+def set_article_pointer(rel: str) -> bool:
+    """设置「这一期的推文原文存在哪个文件」。只给代码用，不走模型，不在白名单里。"""
+    kb = load()
+    acts = kb.get("activities") or []
+    if not acts:
+        return False
+    acts[0]["article"] = rel
+    acts[0]["_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    _backup()
+    _write(kb)
+    return True
 
 
 # ---------------------------------------------------------------- 对外接口
