@@ -33,6 +33,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import config
+import store
 
 
 def _load_json(path) -> Dict[str, Any]:
@@ -151,10 +152,168 @@ def archive_article(label: str = "", activity: Optional[Dict[str, Any]] = None) 
     return rel
 
 
-def build_context(activity_id: Optional[str] = None) -> str:
+# ---------------------------------------------------------------- 活动回顾推文
+# 为什么单独存一份，而不是塞进 activities.json：
+#   活动记录是**单活动模型**——办完一期就被新一期整条替换掉。
+#   但回顾推文是那一期的历史资料，客服过两个月还会被问「第十五期回顾里写了什么」。
+#   跟着活动记录走的话，换一期就没了。
+#   所以回顾推文按期次存成单独的文件，只往后加，不跟着换期被覆盖。
+REVIEW_DIR_REL = "articles/reviews"
+
+
+def _safe_name(label: str) -> str:
+    s = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "_", str(label or "")).strip("_")
+    return s or "unknown"
+
+
+def period_label(text: str) -> str:
+    """从一段文字里认出「第X期」，统一成阿拉伯数字写法。认不出返回空串。
+
+    为什么统一写法：客服可能写「第9期」也可能写「第九期」，
+    文件名不一致就会存成两份，查的时候总漏一份。
+    """
+    m = re.search(r"第\s*([0-9]{1,3}|[零一二两三四五六七八九十]{1,4})\s*期", text or "")
+    if not m:
+        return ""
+    n = store.session_number(m.group(0))
+    return f"第{n}期" if n else ""
+
+
+def _review_index() -> Any:
+    return config.DATA_DIR / REVIEW_DIR_REL / "index.jsonl"
+
+
+def save_review(text: str, label: str = "") -> Dict[str, Any]:
+    """把活动回顾推文存起来（按期次一个文件，同一期重存先备份）。
+
+    期次怎么定：
+      ① 客服明确给了 label → 用它
+      ② 推文正文里写了「第X期」→ 用正文里的（最可靠，粘的是往期也对得上）
+      ③ 都没写 → 当当前这一期
+    不做模型判断：期次弄错会把第十五期的回顾存成第十六期，以后查出来就是错的。
+    """
+    text = (text or "").strip()
+    if not text:
+        return {"ok": False, "error": "回顾推文是空的"}
+    act = get_activity() or {}
+    lab = (label or period_label(text)
+           or str(act.get("session_label") or act.get("id") or "unknown"))
+    safe = _safe_name(lab)[:40]
+    rel = f"{REVIEW_DIR_REL}/review_{safe}.md"
+    path = config.DATA_DIR / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    replaced = path.exists()
+    if replaced:
+        bak = (config.DATA_DIR / "backups"
+               / f"review.{safe}.{time.strftime('%Y%m%d-%H%M%S')}.md")
+        bak.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, bak)
+    path.write_text(text + "\n", encoding="utf-8")
+
+    first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    idx = _review_index()
+    with open(idx, "a", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "session_label": lab,
+            "path": rel,
+            "chars": len(text),
+            "first_line": first[:60],
+        }, ensure_ascii=False) + "\n")
+    return {"ok": True, "label": lab, "rel": rel, "chars": len(text),
+            "replaced": replaced}
+
+
+def load_review_by_label(label: str) -> str:
+    """按期次读回顾推文原文。先试同名文件，再按期次号匹配（容错「第9期/第九期」）。"""
+    path = config.DATA_DIR / REVIEW_DIR_REL / f"review_{_safe_name(label)[:40]}.md"
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        pass
+    want = store.session_number(label)
+    if want is None:
+        return ""
+    for it in list_reviews():
+        if store.session_number(it.get("session_label")) == want:
+            try:
+                return (config.DATA_DIR / str(it.get("path"))).read_text(encoding="utf-8")
+            except OSError:
+                return ""
+    return ""
+
+
+def load_review(activity: Optional[Dict[str, Any]] = None) -> str:
+    """当前这一期的回顾推文原文（没有就返回空串）。"""
+    act = activity if activity is not None else get_activity()
+    lab = str((act or {}).get("session_label") or (act or {}).get("id") or "")
+    return load_review_by_label(lab) if lab else ""
+
+
+def list_reviews() -> List[Dict[str, Any]]:
+    """已存档的回顾推文（同一期只留最新一条），按期次从新到旧。"""
+    idx = _review_index()
+    if not idx.exists():
+        return []
+    latest: Dict[str, Dict[str, Any]] = {}
+    for ln in idx.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            it = json.loads(ln)
+        except Exception:
+            continue
+        lab = str(it.get("session_label") or "")
+        if lab:
+            latest[lab] = it
+    return sorted(latest.values(),
+                  key=lambda x: store.session_number(x.get("session_label")) or 0,
+                  reverse=True)
+
+
+_REVIEW_MARKS = ("回顾", "精彩瞬间", "圆满结束", "现场照片", "活动花絮", "精彩回顾")
+_RECRUIT_MARKS = ("报名", "招募", "扫码", "名额", "抢位", "填写报名")
+
+
+def decide_article_kind(text: str, model_kind: str) -> str:
+    """模型判的 article_kind，再用代码旁证纠一次。
+
+    为什么要有这一道：
+        判成「推广推文」会走 save_article，**直接把当期推文覆盖掉**；
+        判成「回顾推文」只是多存一个文件，没有破坏性。两条路的代价差很大，
+        所以拿两个反向硬标记做否决：
+          · 像回顾（≥2 个回顾标记）且完全没报名信息 → 一定是回顾
+          · 像招募（≥2 个报名标记）且完全没回顾标记 → 一定是推广
+        证据不明显时仍尊重模型的判断，不要拿关键词表去替代它。
+    """
+    t = text or ""
+    r = sum(1 for m in _REVIEW_MARKS if m in t)
+    p = sum(1 for m in _RECRUIT_MARKS if m in t)
+    if r >= 2 and p == 0:
+        return "review"
+    if p >= 2 and r == 0:
+        return "promo"
+    return model_kind
+
+
+def review_url(text: str) -> str:
+    """从回顾推文原文里找出公众号链接（能找到就自动填进「回顾推文链接」）。"""
+    urls = re.findall(r"https?://[^\s\u3001\uff0c\uff09\)\]】<>》\"']+", text or "")
+    for u in urls:
+        if "mp.weixin.qq.com" in u:
+            return u
+    return urls[0] if urls else ""
+
+
+def build_context(activity_id: Optional[str] = None, question: str = "") -> str:
     """拼出「当前活动 + 通用规则 + 流程 + 文案模板」的完整上下文。
 
     单活动模型下不需要区分期次：资料里永远只有一条活动，就是正在办的那一期。
+
+    question：客服/家长这次问的原话。只用于**多带一份往期回顾原文**——
+        客服明确点到期次（「第十五期回顾里写了什么」）时，就把那一期回顾也放进来。
+        这不是意图分类，只是字符串匹配，失败也只是多给一份资料，不会答错。
     """
     kb = load_activities()
     act = get_activity()
@@ -189,6 +348,33 @@ def build_context(activity_id: Optional[str] = None) -> str:
             "如实说「这一期的详细内容我这边还没有整理，建议看当期推文」，不要编。"
         )
 
+    # 活动回顾推文：活动办完之后才有，讲的是**已经发生**的事。
+    # 它单独存一个文件（articles/reviews/review_<期次>.md），不跟着换期被覆盖。
+    review = load_review(act)
+    if review:
+        parts.append(
+            "【这一期的活动回顾推文原文】（活动已办完，讲的是现场实际发生的事）\n"
+            "家长问「那天孩子们做了什么」「现场怎么样」这类问题时，以这份为准。\n\n"
+            + review
+        )
+
+    # 往期回顾：活动记录换期会被整条替换，但回顾推文按期次长期留着，
+    # 这就是它的用处——客服问「上一期回顾里怎么写的」，还得能查回来。
+    revs = list_reviews()
+    if revs:
+        labels = "、".join(str(r.get("session_label") or "") for r in revs[:12])
+        parts.append("【已存档的活动回顾推文】" + labels +
+                     "\n（已经存下的期次。客服明确点到期次时，那一期的原文会自动附在下面。）")
+        cur_label = str((act or {}).get("session_label") or "")
+        for r in revs:
+            lab = str(r.get("session_label") or "")
+            if not lab or lab == cur_label or lab not in (question or ""):
+                continue
+            text = load_review_by_label(lab)
+            if text:
+                parts.append(f"【往期（{lab}）的活动回顾推文原文】\n{text}")
+                break            # 一次只带一期，别把窗口撑爆
+
     parts.append("【跨期通用规则】\n" + json.dumps(_strip(kb.get("policies", {})), ensure_ascii=False, indent=1))
     parts.append("【品牌信息】\n" + json.dumps(_strip(kb.get("brand", {})), ensure_ascii=False, indent=1))
     parts.append("【流程与定稿文案】\n" + json.dumps(_strip(load_processes()), ensure_ascii=False, indent=1))
@@ -204,6 +390,6 @@ def build_context(activity_id: Optional[str] = None) -> str:
     return "\n\n".join(parts)
 
 
-def context_size(activity_id: Optional[str] = None) -> int:
+def context_size(activity_id: Optional[str] = None, question: str = "") -> int:
     """上下文有多少字，用来盯着别把窗口撑爆。"""
-    return len(build_context(activity_id))
+    return len(build_context(activity_id, question))

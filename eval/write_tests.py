@@ -196,11 +196,159 @@ def store_replace_tests() -> int:
     return bad
 
 
+# ---------------------------------------------------------------- 群文案渲染
+# 这一层的 bug 都不报错，只会「少给一段」或「留个空自己没发现」。
+# 2026-10-26 用户报的就是：进校预约那一段只吐了「进校门提醒」，
+# 预约文案、公众号名片、填写示例图、催办话术全没出来。
+# 原因：渲染器只在 messages 为空时才展开 uses_process。
+REVIEW_TEXT = """“山海科普研学”第十六期回顾丨自贸港小商人·集市大冒险
+
+10月24日下午，孩子们在海南大学完成了这场集市大冒险。
+孩子们分成五个小组，分别扮作批发商、加工商、零售商、合伙人、物流商，
+用自制的「货币」走完了生产、加工、买卖、合伙、交货的全过程。
+
+现场照片（多图）
+
+阅读原文：https://mp.weixin.qq.com/s/AbCdEf123456
+"""
+
+
+def _leaked_tokens(node, unfilled) -> list:
+    """渲染出来的 text 里还留着 {{}}，但它又不在未填清单里 → 静默丢数据。"""
+    import re as _re
+    bad = []
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "text" and isinstance(v, str):
+                for tk in _re.findall(r"\{\{[^{}]+\}\}", v):
+                    if tk not in unfilled:
+                        bad.append(tk)
+            else:
+                bad += _leaked_tokens(v, unfilled)
+    elif isinstance(node, list):
+        for v in node:
+            bad += _leaked_tokens(v, unfilled)
+    return bad
+
+
+def copy_layer_tests() -> int:
+    """群文案渲染 + 回顾推文存储（不走模型，纯代码纪律）。"""
+    import renderer
+
+    print("\n" + "-" * 78)
+    print("群文案渲染（不走模型，纯代码纪律）")
+    print("-" * 78)
+    bad = 0
+
+    def check(name, ok, extra=""):
+        nonlocal bad
+        if not ok:
+            bad += 1
+        print(f"  {'✅' if ok else '❌'} {name}{('   ' + extra) if extra and not ok else ''}")
+
+    # ① 进校预约那一段：必须把流程的 4 件 + 门禁提醒全吐出来，而且顺序对
+    d = json.loads(renderer.render_group_messages("S16", stage="②"))
+    labels = [m.get("label", "") for m in d["messages"] if m.get("label") != "这一步必须人工做的"]
+    want = ["预约提醒文案", "「海南大学」公众号名片 / 链接", "进校预约填写示例截图",
+            "进校门提醒（紧跟预约文案发）", "@所有人 催办话术"]
+    check("阶段② 五件都在、顺序对", labels == want, f"实际 {labels}")
+    check("阶段② 手动发送项被标出来（名片 + 示例图）",
+          sum(1 for m in d["messages"] if m.get("manual")) == 2)
+
+    # ② 被访人信息从 .env 注入；没配置就必顶占位符进未填，不能留空白
+    first = d["messages"][0]["text"]
+    if config.VISIT_TARGET_NAME and config.VISIT_TARGET_PHONE:
+        check(".env 里的被访人姓名/电话填进了预约文案",
+              config.VISIT_TARGET_NAME in first and config.VISIT_TARGET_PHONE in first)
+    saved = (config.VISIT_TARGET_NAME, config.VISIT_TARGET_PHONE)
+    config.VISIT_TARGET_NAME = config.VISIT_TARGET_PHONE = ""
+    d2 = json.loads(renderer.render_group_messages("S16", stage="②"))
+    config.VISIT_TARGET_NAME, config.VISIT_TARGET_PHONE = saved
+    check("没配被访人信息时保留占位符并进未填清单",
+          "{{被访人姓名}}" in d2["unfilled_summary"]
+          and "{{被访人姓名}}" in d2["messages"][0]["text"])
+
+    # ③ {{反馈时点}} 永远算「必须人工改」，并带上为什么
+    check("{{反馈时点}} 进了未填清单", "{{反馈时点}}" in d["unfilled_summary"])
+    check("{{反馈时点}} 带上了「按建群时间改」的说明",
+          "建群" in (d["unfilled_reasons"].get("{{反馈时点}}") or ""))
+
+    # ④ 不能静默留空：渲染结果里的 {{}} 必须都被申报过
+    for st in ("①", "②", "③", "④", "⑤"):
+        dd = json.loads(renderer.render_group_messages("S16", stage=st))
+        leaked = _leaked_tokens(dd["messages"], dd["unfilled_summary"])
+        check(f"阶段{st} 没有未申报的模板占位符残留", not leaked, f"漏报 {leaked}")
+
+    # ⑤ ⑤ 里两种文案要能分开：要「结束感谢」时不该拖出「回顾分享」
+    t = json.loads(renderer.render_group_messages("S16", stage="⑤", only_tags=["thanks"]))
+    joined = "".join(m.get("text", "") for m in t["messages"])
+    check("only_tags=thanks 只出结束感谢", "回顾推文出来啦" not in joined and "圆满结束" in joined)
+    r = json.loads(renderer.render_group_messages("S16", stage="⑤", only_tags=["review"]))
+    joined2 = "".join(m.get("text", "") for m in r["messages"])
+    check("only_tags=review 只出回顾分享", "回顾推文出来啦" in joined2 and "圆满结束" not in joined2)
+
+    # ⑥ 拟好的稿子要能填进去（overrides 优先于「必须人工」）
+    r2 = json.loads(renderer.render_group_messages(
+        "S16", stage="⑤", only_tags=["thanks"],
+        overrides={"{{现场亮点}}": "动手做了三笔买卖并记账"}))
+    txt = "".join(m.get("text", "") for m in r2["messages"])
+    check("传了 override 就填进去、不再是占位符",
+          "动手做了三笔买卖并记账" in txt and "{{现场亮点}}" not in txt)
+
+    # ---------- 回顾推文存储 ----------
+    print("\n" + "-" * 78)
+    print("活动回顾推文存储（不走模型）")
+    print("-" * 78)
+    import knowledge
+    review_dir = TMP_DATA / "articles" / "reviews"
+    shutil.rmtree(review_dir, ignore_errors=True)
+
+    check("从正文认出期次并统一成阿拉伯数字（第十六期 → 第16期）",
+          knowledge.period_label(REVIEW_TEXT) == "第16期", knowledge.period_label(REVIEW_TEXT))
+    check("中文数字也能认（第九期 → 第9期）",
+          knowledge.period_label("第九期回顾") == "第9期")
+
+    info = knowledge.save_review(REVIEW_TEXT)
+    check("存成按期次命名的文件", info.get("rel") == "articles/reviews/review_第16期.md",
+          str(info.get("rel")))
+    check("文件真的在磁盘上", (TMP_DATA / info["rel"]).exists())
+    check("能读回来", knowledge.load_review_by_label("第十六期").startswith("“山海科普研学”第十六期回顾"))
+    check("当前这一期也能读到（load_review）",
+          "集市大冒险" in knowledge.load_review(knowledge.get_activity()))
+    check("从回顾推文里抽出了公众号链接",
+          knowledge.review_url(REVIEW_TEXT) == "https://mp.weixin.qq.com/s/AbCdEf123456")
+
+    before = len(list((TMP_DATA / "backups").glob("review.*")))
+    info2 = knowledge.save_review(REVIEW_TEXT + "\n\n（补一句：下一期下周开放报名）")
+    after = len(list((TMP_DATA / "backups").glob("review.*")))
+    check("同一期重存会先备份旧稿", info2.get("replaced") is True and after == before + 1)
+    check("索引里同一期只算一条",
+          [x["session_label"] for x in knowledge.list_reviews()].count("第16期") == 1)
+
+    # 回顾推文不能影响活动记录：它讲的是已经办完的那一场
+    act_before = knowledge.get_activity()
+    knowledge.save_review(REVIEW_TEXT)
+    act_after = knowledge.get_activity()
+    check("存回顾推文不会改动活动记录", act_before == act_after)
+
+    # ---------- 文章类型旁证（纯代码） ----------
+    check("模型误判成推广时，代码拿旁证否决成回顾",
+          knowledge.decide_article_kind(REVIEW_TEXT, "promo") == "review")
+    check("模型误判成回顾时，代码拿旁证否决成推广",
+          knowledge.decide_article_kind(
+              "第十七期招募  扫码报名  名额 25 人  以下是活动流程", "review") == "promo")
+    check("证据不明显时听模型的",
+          knowledge.decide_article_kind("一段普通群公告", "promo") == "promo")
+
+    return bad
+
+
 def main() -> int:
     config.check()
-    total = len(CASES) + len(REPLACE_CASES) + len(STAY_CASES)
+    total = len(CASES) + len(REPLACE_CASES) + len(STAY_CASES) + 1
     print("=" * 78)
-    print(f"录入测试：{len(CASES)} 条常规 + {len(REPLACE_CASES)} 条整期替换 + {len(STAY_CASES)} 条普通改字段")
+    print(f"录入测试：{len(CASES)} 条常规 + {len(REPLACE_CASES)} 条整期替换 + "
+          f"{len(STAY_CASES)} 条普通改字段 + 1 条粘回顾推文")
     print(f"题库副本：{TMP.name}（不动真实数据）")
     print("=" * 78)
 
@@ -243,6 +391,27 @@ def main() -> int:
         print(f"   回复：{r['answer'][:90].replace(chr(10), ' ')}")
 
     bad += store_replace_tests()
+
+    # ---- 粘贴「活动回顾推文」：只能多存一个文件，绝不能动活动记录 ----
+    print("\n" + "-" * 78)
+    print("粘贴活动回顾推文（不能动活动记录）")
+    print("-" * 78)
+    reset()
+    before = snap()
+    r = agent.answer_chat(REVIEW_TEXT, activity_id="S16")
+    after = snap()
+    changed = {k: v for k, v in after.items() if before.get(k) != v}
+    review_file = TMP_DATA / "articles" / "reviews" / "review_第16期.md"
+    ok = (bool(r.get("review_saved")) and not changed and review_file.exists()
+          and "save_review" in (r.get("trace") or []))
+    if not ok:
+        bad += 1
+    print(f"{'✅' if ok else '❌'} 粘回顾推文 → 存成 {r.get('review_saved') or '（没存）'}")
+    print(f"   调用链 {r.get('trace')}")
+    print(f"   活动字段变化：{changed or '无（正确）'}")
+    print(f"   回复：{r['answer'].splitlines()[0] if r.get('answer') else ''}")
+
+    bad += copy_layer_tests()
 
     print("\n" + "-" * 78)
     print("普通改字段（不应该被当成换活动）")

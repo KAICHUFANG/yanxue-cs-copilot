@@ -128,7 +128,7 @@ def answer_ctx(question: str, activity_id: Optional[str] = None,
     stream_cb（流式回调）：传了就用 stream=True 逐字推给界面，边生成边显示。
     没传就是一次性拿完整结果（命令行、评测走这条）。
     """
-    ctx = knowledge.build_context(activity_id)
+    ctx = knowledge.build_context(activity_id, question)
     msgs: List[Dict[str, Any]] = [{"role": "system", "content": _CTX_SYSTEM + "\n\n" + ctx}]
     for m in (history or [])[-6:]:
         if m.get("role") in ("user", "assistant") and m.get("content"):
@@ -213,6 +213,15 @@ __FIELDS__
   有小标题、有段落、讲活动是干什么的）
 · false = 其他所有情况
 
+**粘的是文章时，再判断一次 article_kind（推广推文，还是活动回顾推文）：**
+· "review" = 这是**活动办完之后写的回顾推文**。特征是：讲已经办完的那一场，
+  常出现「回顾」「精彩瞬间」「圆满结束」「现场照片」「孩子们在活动中……」（过去时），
+  目的是总结已经发生的事
+· "promo"  = 这是**活动之前写的招募/推广推文**。特征是：讲还没办、正在报名的那一场，
+  有报名方式、名额、时间地点、招募对象、「扫码报名」
+· ""       = 不是文章，或有文章但它既不像回顾也不像招募（比如普通群公告）
+· **拿不准就看有没有报名信息**：正在拉人报名 → promo；已经办完在总结 → review
+
 **粘的是整篇推文时，再判断一次 is_new_activity（这条很关键，判错会串期）：**
 · true = 这是**另一期新活动**的推文（有期次、有日期、讲的是新活动）
 · false = 这是**当前这一期**的推文重发/更正，或者只是同一期的补充说明
@@ -227,7 +236,7 @@ __FIELDS__
   capacity 就不要填，让它空着（空着界面会提示客服去确认，填错了没人发现）
 
 只输出 JSON：
-{"kind": "update" | "copy" | "question", "is_article": true | false, "is_new_activity": true | false, "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语/活动提醒/出发提醒/结束感谢；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
+{"kind": "update" | "copy" | "question", "is_article": true | false, "is_new_activity": true | false, "article_kind": "promo" | "review" | "", "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语/活动提醒/出发提醒/结束感谢；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
 
 promo_channel 怎么填：
 · 提到「朋友圈」「盆友圈」「pyq」「圈里」「动态」→ moments
@@ -238,11 +247,15 @@ promo_channel 怎么填：
 # 文案阶段 → group_messages.json 里 timeline 的圈号。
 # 渲染器的 stage 参数是按「圈号是不是子串」筛选的，所以这里只给圈号。
 _STAGE_HINT = [
-    ("欢迎", "①"), ("拉群", "①"), ("建群", "①"),
-    ("预约", "②"), ("进校", "②"),
-    ("提醒", "③"), ("前一天", "③"),
-    ("出发", "④"), ("当天", "④"),
-    ("结束", "⑤"), ("感谢", "⑤"), ("回顾", "⑤"),
+    ("欢迎", "①", None), ("拉群", "①", None), ("建群", "①", None),
+    ("预约", "②", None), ("进校", "②", None),
+    ("提醒", "③", None), ("前一天", "③", None),
+    ("出发", "④", None), ("当天", "④", None),
+    # ⑤ 里有两种不同用途的文案，靠 tag 分开：
+    #   结束感谢（thanks）当天晚上发；回顾分享（review）等推文发完 1-2 天才发。
+    # 「回顾」放在前面先匹配，否则「回顾推文」会被当成「结束」把两段都吐出来。
+    ("回顾", "⑤", ["review"]),
+    ("结束", "⑤", ["thanks"]), ("感谢", "⑤", ["thanks"]),
 ]
 
 
@@ -283,10 +296,14 @@ def classify_input(question: str, activity_id: Optional[str] = None) -> Dict[str
     channel = data.get("promo_channel")
     if channel not in ("group", "moments"):
         channel = "group"          # 没说清就是发群
+    article_kind = data.get("article_kind")
+    if article_kind not in ("promo", "review"):
+        article_kind = ""           # 认不出就按「不处理文章」走，宁可不存也不乱存
     return {
         "kind": kind,
         "is_article": bool(data.get("is_article")),
         "is_new_activity": bool(data.get("is_new_activity")),
+        "article_kind": article_kind,
         "copy_type": copy_type,
         "promo_channel": channel,
         "updates": data.get("updates") if isinstance(data.get("updates"), dict) else {},
@@ -438,6 +455,118 @@ def _is_other_session(decided: Dict[str, Any]) -> bool:
 
 
 # ---------------------------------------------------------------- 文案
+# ---------------------------------------------------------------- 按原文拟稿
+# 「结束感谢」里的现场亮点、「回顾分享」里的具体细节，过去都是留给客服自己想的空。
+# 用户 2026-10-26 的要求：这两处让系统直接按推文拟出来，客服只核对。
+#
+# 风险在哪：这一步是**模型写内容**，而收尾文案是要发到几百人家长群的。
+# 所以加了三道闸：
+#   ① 只给它原文（推广推文 / 回顾推文），不给它别的资料
+#   ② 要求它同时交出「依据的原句」，并且这句必须在原文里找得到（找不到整条作废）
+#   ③ 拟出来的稿子在输出里单独标出来，写明依据，客服看得见才核对得上
+_DERIVE_SYSTEM = """你在帮「山海科普研学」的客服填活动群文案里的一个空。
+
+【原文】给的是这一期的文章原文。请按【要求】从原文里提炼一句话。
+
+硬规则：
+· 只能用【原文】里**明确写过**的内容。原文没写的，一律不许补充
+· 不许写数字（人数、名额、价格），除非原文原句里就有
+· 不许写评价和情绪（「收获满满」「玩得超开心」「意猶未尽」这类空话不要）
+· 不要引号、不要句号结尾（模板后面还要接别的字）
+· 原文里找不到合适依据 → sentence 输出空字符串
+· quote 必须**逐字照抄**【原文】里你依据的那一句（不超过 40 字）——
+  这句会被拿去原文里核对，找不到就整条作废
+
+只输出 JSON：{"sentence": "...", "quote": "..."}"""
+
+# 两处空分别要什么（只改【要求】，不另写两套提示词）
+_TARGET_HIGHLIGHT = (
+    "写一句接在「今天孩子们」后面的话，20-35 字。"
+    "要具体到孩子们**做了什么**（环节名、动作、做出的东西），不要写感想。"
+)
+_TARGET_REVIEW = (
+    "写一句接在「里面记录了孩子们」后面的话，20-35 字。"
+    "写活动里的环节名，或写的孩子们在现场的真实表现（做了什么、做出了什么）。"
+)
+
+
+def _norm(s: str) -> str:
+    """比对用：去掉空白和标点，只留字。"""
+    return re.sub(r"[\s，。、；：！？「」『』（）()“”\"'’,.;:!?—…\-~]", "", s or "")
+
+
+def derive_from_article(target: str, source: str, source_name: str) -> Dict[str, str]:
+    """从原文里提炼一句话。返回 {} 表示不可用（宁可留空给人工，不允许编）。"""
+    if not (source or "").strip():
+        return {}
+    try:
+        resp = _client.chat.completions.create(
+            model=config.MODEL,
+            messages=[{"role": "system", "content": _DERIVE_SYSTEM},
+                      {"role": "user", "content":
+                       f"【原文】（{source_name}）\n{source}\n\n【要求】\n{target}"}],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        m = re.search(r"\{.*\}", resp.choices[0].message.content or "", re.S)
+        data = json.loads(m.group(0)) if m else {}
+    except Exception:
+        return {}
+
+    sent = str(data.get("sentence") or "").strip().strip("「」\"'")
+    quote = str(data.get("quote") or "").strip().strip("「」\"'")
+    # 闸②：依据必须在原文里找得到。找不到就是它在编，整条丢掉。
+    if not sent or not quote or _norm(quote) not in _norm(source):
+        return {}
+    if len(sent) > 60:
+        return {}
+    return {"text": sent, "quote": quote, "source_name": source_name}
+
+
+def _derive_overrides(tokens: set) -> tuple:
+    """看这次缺哪几个空，只给缺的那几个花钱调模型。"""
+    ov: Dict[str, str] = {}
+    drafts: List[Dict[str, str]] = []
+
+    if "{{现场亮点}}" in tokens:
+        d = derive_from_article(_TARGET_HIGHLIGHT, knowledge.load_article(),
+                                "当期活动推广推文")
+        if d:
+            ov["{{现场亮点}}"] = d["text"]
+            drafts.append({**d, "label": "现场亮点"})
+
+    if "{{具体细节}}" in tokens:
+        d = derive_from_article(_TARGET_REVIEW, knowledge.load_review(),
+                                "活动回顾推文")
+        if d:
+            ov["{{具体细节}}"] = d["text"]
+            drafts.append({**d, "label": "回顾细节"})
+
+    if "{{回顾推文链接}}" in tokens:
+        url = knowledge.review_url(knowledge.load_review())
+        if url:
+            ov["{{回顾推文链接}}"] = url
+            drafts.append({"label": "回顾推文链接", "text": url,
+                           "quote": "（从回顾推文原文里提取的链接）",
+                           "source_name": "活动回顾推文"})
+    return ov, drafts
+
+
+def _render_group(aid: Optional[str], key: Optional[str],
+                  overrides: Optional[Dict[str, str]] = None,
+                  only_tags: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+    """调渲染层并把 JSON 解析好。渲染层出错时不让整个对话挂掉。"""
+    try:
+        raw = renderer.render_group_messages(aid, stage=key, overrides=overrides,
+                                             only_tags=only_tags)
+    except Exception as e:
+        return {"error": f"渲染失败：{e}"}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"error": raw}
+
+
 def render_copy(stage_text: str, all_when_empty: bool = True) -> str:
     """按阶段渲染群文案。模板里的 {{占位符}} 由代码填，保证原文输出。
 
@@ -449,36 +578,70 @@ def render_copy(stage_text: str, all_when_empty: bool = True) -> str:
         对话框路径必须传 False —— 否则「写推广文案」会被渲染成「欢迎语」，
         因为 stage=None 时渲染器从第一个阶段开始输出。这是真实报过的 bug。
     """
-    key = None
-    for word, no in _STAGE_HINT:
+    key, tags = None, None
+    for word, no, tg in _STAGE_HINT:
         if word in (stage_text or ""):
-            key = no
+            key, tags = no, tg
             break
     if key is None and not all_when_empty:
         return ""
 
-    raw = renderer.render_group_messages(knowledge.current_activity_id(), stage=key)
-    try:
-        data = json.loads(raw)
-    except Exception:
-        return raw
+    aid = knowledge.current_activity_id()
+    data = _render_group(aid, key, None, tags)
+    if not data:
+        return ""
+    if data.get("error"):
+        return json.dumps(data, ensure_ascii=False)
+
+    # 两遍渲染：第一遍先看这次到底缺哪几个空，只给缺的那几个花钱调模型拟稿，
+    # 拟到就第二遍填进去。不缺（或拟不出来）就完全不调模型。
+    tokens = set(data.get("unfilled_summary") or [])
+    overrides, drafts = _derive_overrides(tokens)
+    if overrides:
+        data = _render_group(aid, key, overrides, tags) or data
 
     lines: List[str] = []
     for m in data.get("messages", []):
-        if m.get("text"):
+        if m.get("tips"):
+            # 提示本身是多行的（比如「改反馈时点」分两种建群时间），
+            # 不能简单拼成一行，否则两种情形看起来像同一条。
+            block: List[str] = []
+            for t in m["tips"]:
+                ls = [x.strip().lstrip("·").strip()
+                      for x in str(t).splitlines() if x.strip()]
+                if not ls:
+                    continue
+                block.append("· " + ls[0])
+                block += ["   " + x for x in ls[1:]]
+            if block:
+                lines.append("⚠ 这一步必须人工做的：" + chr(10) + chr(10).join(block))
+        elif m.get("text"):
             lines.append(m["text"].strip())
             if m.get("unfilled"):
                 lines.append("（上面还有需要人工补的："
                              + "、".join(m["unfilled"]) + "）")
         elif m.get("manual"):
             lines.append(f"【需要你手动发】{m.get('label', '')}：{m.get('action', '')}")
+        elif m.get("note"):
+            lines.append(f"【{m.get('label', '')}】{m['note']}")
     if not lines:
         return ""
 
     out = "\n\n————\n\n".join(lines)
     left = data.get("unfilled_summary") or []
     if left:
+        reasons = data.get("unfilled_reasons") or {}
         out += "\n\n⚠ 还需人工补：" + "、".join(left)
+        detail = [f"· {t}：{reasons[t]}" for t in left if reasons.get(t)]
+        if detail:
+            out += "\n" + "\n".join(detail)
+
+    # 拟稿单独标出来：这几句是系统写的，要让人看见依据才核对得上
+    if drafts:
+        out += "\n\n🤖 下面这几处是系统按原文拟的稿，发之前核对一下现场是不是真这样："
+        for d in drafts:
+            out += (f"\n· {d['label']}：「{d['text']}」"
+                    f"\n  依据{d['source_name']}：「{d['quote']}」")
     return out
 
 
@@ -531,7 +694,7 @@ def write_promo(question: str, activity_id: Optional[str] = None,
         group   微信群 —— 150-250 字，可以分点
         moments 朋友圈 —— 60-100 字、最多 5 行，超过 6 行会被折叠
     """
-    ctx = knowledge.build_context(activity_id)
+    ctx = knowledge.build_context(activity_id, question)
     system = _PROMO_BY_CHANNEL.get(channel, _PROMO_GROUP)
     resp = _client.chat.completions.create(
         model=config.MODEL,
@@ -572,7 +735,7 @@ _INTERNAL_SYSTEM = """你在给客服写内部备注，这段**不会发给家�
 def internal_notes(question: str, answer: str,
                    activity_id: Optional[str] = None,
                    unsure: Optional[List[str]] = None) -> List[str]:
-    ctx = knowledge.build_context(activity_id)
+    ctx = knowledge.build_context(activity_id, question)
     user = (f"【资料】\n{ctx}\n\n"
             f"【家长/客服原话】\n{question}\n\n"
             f"【资料里查不到的点】\n" + ("\n".join(f"- {u}" for u in (unsure or [])) or "（无）") + "\n\n"
@@ -593,6 +756,21 @@ def internal_notes(question: str, answer: str,
 
 
 # ---------------------------------------------------------------- 主入口
+def _review_saved_reply(info: Dict[str, Any]) -> str:
+    """回顾推文存好之后跟客服说的话（客服看的，不是家长看的）。"""
+    lab = info["label"]
+    msg = (f"活动回顾推文已经存下来了：{lab}（{info['rel']}，{info['chars']} 字）。\n"
+           f"活动字段一项都没动 —— 回顾推文讲的是已经办完的那一场，不是新一期，"
+           f"拿它去抽日期/名额会把旧值写进新一期。\n\n"
+           f"接下来可以直接做：\n"
+           f"· 发群里的「回顾分享文案」→ 说「写回顾分享」\n"
+           f"· 「结束感谢」里的现场亮点 → 说「写结束感谢」（按当期推广推文拟）\n"
+           f"以后问「{lab}回顾里写了什么」也能查回来。")
+    if info.get("replaced"):
+        msg += "\n（这一期之前存过回顾推文，旧的那份已备份到 data/backups/）"
+    return msg
+
+
 def answer_chat(
     question: str,
     activity_id: Optional[str] = None,
@@ -625,6 +803,7 @@ def answer_chat(
         out["usage"] = _merge(total, out.get("usage") or {})
         out.setdefault("wrote", [])
         out.setdefault("article_saved", "")
+        out.setdefault("review_saved", "")
         out.setdefault("write_errors", [])
         out.setdefault("replaced", False)
         out.setdefault("dropped", [])
@@ -639,14 +818,45 @@ def answer_chat(
     # 原文不拆字段（推文是叙述文字，拆了必丢东西），只有固定字段进库。
     article_saved = ""
     article_archived = ""
-    # 上一期的推文要先按「期次」名字归档，否则换期之后 current.md 一覆盖就找不回来了
+    # 文章类型：模型判，代码拿旁证再纠一次。
+    # 为什么不能只信模型：判成「推广推文」会把当期推文覆盖掉，
+    # 判成「回顾推文」只是多存一个文件，两条路代价差太大。
+    a_kind = knowledge.decide_article_kind(question, decided.get("article_kind") or "")
+    # 为什么连 is_article 也要纠：
+    #   实测模型会把一篇完整的回顾推文判成「不是文章」（is_article=false），
+    #   那就直接掉进 update 分支，把回顾里的旧日期/旧地点/旧分组写进**当前这一期**——
+    #   这就是串期。只要旁证确定它是文章，而且她不是在要文案，就按文章算。
+    is_article = (bool(decided.get("is_article"))
+                  or (len(question) > 200 and a_kind != ""
+                      and decided["kind"] != "copy"))    # 上一期的推文要先按「期次」名字归档，否则换期之后 current.md 一覆盖就找不回来了
     # （save_article 的自动备份是时间戳命名，翻起来只能一个个打开猜）。
     if _is_other_session(decided):
         article_archived = knowledge.archive_article()
+
+    # ---- 粘进来一篇「活动回顾推文」：单独存成一个文件，一个活动字段都不写 ----
+    # 回顾推文讲的是**已经办完**的那一场，里面全是旧值（上一期的日期、名额、集合点）。
+    # 如果跟推广推文一样拿去抽字段，就会把旧值写进当前这一期 —— 串期。
+    # 所以这里直接存原文就走，不进入下面的 update 分支。
+    # 长度门槛只对「推广推文」设 200：存推广推文会覆盖 current.md，宁可严一点。
+    # 回顾推文只是多存一个文件，不具破坏性，门槛放到 80 字（太短的话多半不是推文）。
+    if (is_article and a_kind == "review"
+            and decided["kind"] != "copy" and len(question) > 80):
+        info = knowledge.save_review(question)
+        if info.get("ok"):
+            if verbose:
+                print(f"  📄 回顾推文已存：{info['rel']}（{info['label']}，"
+                      f"{info['chars']} 字）")
+            return done({"answer": _review_saved_reply(info),
+                         "trace": ["classify", "save_review"],
+                         "review_saved": info["rel"]})
+        return done({"answer": f"回顾推文没存下来：{info.get('error')}",
+                     "trace": ["classify", "save_review"],
+                     "write_errors": [str(info.get("error"))]})
     # 只有「这次是在录一期新的推文」才落盘。
     # 曾经只判 is_article、不判 kind，结果模型把一段长文案请求误标成 is_article，
     # 就把当期推文覆盖掉了（实测踩过，靠 git 才恢复）。判断是模型给的，破坏动作不能跟着它走。
-    if decided.get("is_article") and decided["kind"] == "update" and len(question) > 200:
+    if is_article and decided["kind"] == "update" and len(question) > 200 \
+            and a_kind != "review":
         rel = knowledge.save_article(question)
         store.set_article_pointer(rel)
         article_saved = rel

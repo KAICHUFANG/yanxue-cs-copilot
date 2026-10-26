@@ -34,12 +34,31 @@ _FIELD_SOURCES: Dict[str, Tuple[str, Optional[str]]] = {
     "{{集合时间}}": ("meeting_time", None),
 }
 
-# 这些占位符天然无法自动填：要么活动结束后才产生，要么由人判断
+# 这些占位符天然无法自动填：要么活动结束后才产生，要么必须人判断
 _ALWAYS_MANUAL = {
-    "{{一句真实亮点": "活动结束后才能写，必须人工",
-    "{{具体细节": "依赖现场实际发生的内容，必须人工",
-    "{{回顾推文链接}}": "推文发布后才有链接，必须人工",
+    # 2026-10-26 改：不再让客服整句自己想。
+    # 系统先用活动推广推文拟一版草稿（agent.derive_*），客服只负责核对，
+    # 核对不过关才由人重写。
+    "{{现场亮点": "系统会先按当期推文拟一版草稿，发之前核对现场是否真照推文执行",
+    "{{具体细节": "系统会先按活动回顾推文拟一版草稿，核对后再发",
+    "{{回顾推文链接}}": "推文发布后才有链接（回顾推文原文里带链接时会自动填上）",
 }
+
+# 每一类占位符为什么填不了。要写给客服看，不能只说「未填」。
+_MANUAL_REASON = dict(_ALWAYS_MANUAL)
+_MANUAL_REASON["{{反馈时点}}"] = (
+    "必须按建群时间改：距活动不足 2 天 →「今天较晚时段」；否则 →「明天下午」"
+)
+
+
+def _reason_for(token: str) -> str:
+    for prefix, reason in _MANUAL_REASON.items():
+        if token.startswith(prefix):
+            return reason
+    if token in _FIELD_SOURCES:
+        return "活动记录里这一项还是空的：问活动负责人确认，然后直接跟我说「集合地点在…」就会写进去"
+    return "代码里没有这项数据来源，需要人工补"
+
 
 
 def _fmt_date(activity: Dict[str, Any]) -> Optional[str]:
@@ -132,6 +151,92 @@ def _load_processes() -> Dict[str, Any]:
         return json.load(f)
 
 
+# ---------------------------------------------------------------- 流程发送包
+# 「进校预约」这类流程的定稿存在 processes.json 里，群文案阶段只写一句
+# uses_process: campus_booking 引用它（定稿只存在一处，不复制）。
+#
+# 这里踩过一个不报错的坑（2026-10-26 用户报的）：
+#   只判「这个阶段有没有 messages」，有就只渲染 messages、`uses_process` 被静默忽略。
+#   结果阶段②只吐出「进校门小提醒」，真正的预约文案、公众号名片、填写示例图、
+#   催办话术全部没出现——客服以为系统漏了，只能自己去翻文件。
+#   所以现在：只要有 uses_process，就一定把流程的 send_package 展开进来。
+
+
+def _process_sources() -> Dict[str, Optional[str]]:
+    """流程文案里的占位符。（None = 代码没有来源，必须人工填）"""
+    return {
+        # 被访人是团队自己的老师，属于固定信息，存在 .env（个人信息不进仓库）
+        "{{被访人姓名}}": config.VISIT_TARGET_NAME or None,
+        "{{被访人电话}}": config.VISIT_TARGET_PHONE or None,
+        # 不能照抄默认值：建群晚的活动要改成「今天较晚时段」，否则来不及催审核
+        "{{反馈时点}}": None,
+    }
+
+
+def render_plain(template: str, sources: Dict[str, Optional[str]]) -> Dict[str, Any]:
+    """通用占位符渲染（给流程/发送包用）。
+
+    和 render_text 的区别：这里的数据不来自活动记录，而是来自 .env 和流程文件。
+    规则一样：查不到就原样保留并记进未填清单，绝不用推测顶替。
+    """
+    unfilled: List[str] = []
+
+    def _replace(match: re.Match) -> str:
+        token = match.group(0)
+        value = sources.get(token)
+        if value in (None, ""):
+            unfilled.append(token)
+            return token
+        return str(value)
+
+    return {"text": _PLACEHOLDER_RE.sub(_replace, template), "unfilled": unfilled}
+
+
+def _process_items(proc_key: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """把流程里的 send_package 展开成「一条一条要发的东西」。"""
+    proc = _load_processes().get(proc_key) or {}
+    pkg = proc.get("send_package") or {}
+    sources = _process_sources()
+    items: List[Dict[str, Any]] = []
+
+    for it in pkg.get("items") or []:
+        base = {
+            "stage_seq": it.get("seq", 99),
+            "label": it.get("label", ""),
+            "source": it.get("source") or ("" if it.get("type") == "manual_send_required"
+                                           else "用户提供"),
+            "from_process": proc_key,
+        }
+        if it.get("type") == "manual_send_required":
+            items.append({**base, "manual": True,
+                          "action": it.get("content_note") or it.get("text") or "",
+                          "note": it.get("why", "")})
+            continue
+        r = render_plain(it.get("text", ""), sources)
+        items.append({**base, "text": r["text"],
+                      "unfilled": r["unfilled"], "ready": not r["unfilled"]})
+
+    items.sort(key=lambda x: x.get("stage_seq", 99))
+    return items, proc
+
+
+def _merge_items(proc_items: List[Dict[str, Any]], inline: List[Dict[str, Any]],
+                 insert_after_seq: Optional[int]) -> List[Dict[str, Any]]:
+    """把流程的发送包和本阶段自带的文案按发送顺序合到一起。
+
+    insert_after_seq：本阶段自带的那几条，要插在流程的第几条之后发。
+      例：进校门提醒插在「填写示例图（3）」之后、「催办（4）」之前。
+      不写就排在整个流程后面——宁可顺序平一点，也不要猜错顺序。
+    """
+    if not proc_items:
+        return list(inline)
+    if insert_after_seq is None:
+        return list(proc_items) + list(inline)
+    head = [i for i in proc_items if i.get("stage_seq", 99) <= insert_after_seq]
+    tail = [i for i in proc_items if i.get("stage_seq", 99) > insert_after_seq]
+    return head + list(inline) + tail
+
+
 def _resolve_ref(ref: str) -> str:
     """解析形如 "campus_booking.entry_gate.ready_to_send_text" 的引用。
 
@@ -151,8 +256,15 @@ def render_group_messages(
     activity_id: str,
     stage: Optional[str] = None,
     overrides: Optional[Dict[str, str]] = None,
+    only_tags: Optional[List[str]] = None,
 ) -> str:
-    """渲染活动群文案。activity_id 形如 S16；stage 可只渲染某一阶段（如 "③"）。"""
+    """渲染活动群文案。activity_id 形如 S16；stage 可只渲染某一阶段（如 "③"）。
+
+    only_tags：同一阶段里有几种不同用途的文案时，只出指定的那几种。
+      例：阶段⑤ 包含「结束感谢」(tag=thanks) 和「回顾分享」(tag=review)，
+      客服要「写结束感谢」时不该把回顾分享那段也拖出来（那时它全是空）。
+      不传 = 这个阶段的全部都要。
+    """
     activity = load_activity(activity_id)
     if not activity:
         return json.dumps(
@@ -167,25 +279,35 @@ def render_group_messages(
 
     out: List[Dict[str, Any]] = []
     all_unfilled: List[str] = []
+    reasons: Dict[str, str] = {}
+
+    def note(tokens: List[str]) -> None:
+        for tk in tokens:
+            if tk not in all_unfilled:
+                all_unfilled.append(tk)
+                reasons[tk] = _reason_for(tk)
 
     for st in book["timeline"]:
         if stage and stage not in st["stage"]:
             continue
-        if not st.get("messages"):
-            # 引用型阶段（如预约进校），提示去查对应流程
-            if st.get("uses_process"):
-                out.append({
-                    "stage": st["stage"],
-                    "label": st.get("stage", ""),
-                    "note": f"该阶段引用流程 {st['uses_process']}，请调用 get_campus_booking_flow 获取定稿",
-                    "ready": False,
-                    "unfilled": [],
-                })
-            continue
 
-        for msg in st["messages"]:
+        # ① 本阶段引用的流程（进校预约…）：先展开成一条条要发的东西。
+        #    注意：**不能只在 messages 为空时才展开** —— 旧逻辑就是这样，
+        #    导致阶段②只吐出「进校门提醒」，预约文案/公众号名片/填写示例图全丢失
+        #    （2026-10-26 用户实测报出来的）。
+        proc_items, proc = ([], {})
+        if st.get("uses_process"):
+            proc_items, proc = _process_items(st["uses_process"])
+            for it in proc_items:
+                note(it.get("unfilled") or [])
+
+        # ② 本阶段自带的文案
+        inline: List[Dict[str, Any]] = []
+        for msg in st.get("messages") or []:
+            if only_tags and msg.get("tag") not in only_tags:
+                continue
             if msg.get("type") == "manual_send_required":
-                out.append({
+                inline.append({
                     "stage": st["stage"],
                     "label": msg["label"],
                     "manual": True,
@@ -197,22 +319,22 @@ def render_group_messages(
             if msg.get("type") == "reference":
                 ref = msg.get("ref", "")
                 resolved = _resolve_ref(ref)
-                out.append({
+                r = render_plain(resolved, _process_sources())
+                note(r["unfilled"])
+                inline.append({
                     "stage": st["stage"],
                     "label": msg["label"],
                     "source": msg.get("source"),
-                    "text": resolved,
-                    "ready": not resolved.startswith("【未能解析"),
-                    "unfilled": [],
+                    "text": r["text"],
+                    "ready": not r["unfilled"],
+                    "unfilled": r["unfilled"],
                     "from_ref": ref,
                 })
                 continue
 
             result = render_text(msg["text"], activity, overrides)
-            for u in result["unfilled"]:
-                if u not in all_unfilled:
-                    all_unfilled.append(u)
-            out.append({
+            note(result["unfilled"])
+            inline.append({
                 "stage": st["stage"],
                 "label": msg["label"],
                 "source": msg.get("source"),
@@ -221,16 +343,42 @@ def render_group_messages(
                 "unfilled": result["unfilled"],
             })
 
+        if not proc_items and not inline and st.get("uses_process"):
+            # 流程里没写发送包、也没有自带文案：只能说清去哪里找，不能假装有内容
+            out.append({
+                "stage": st["stage"],
+                "label": st.get("stage", ""),
+                "note": (f"该阶段引用流程 {st['uses_process']}，但那个流程里没有可发的文案，"
+                         f"请人工确认要发什么"),
+                "ready": False,
+            })
+            continue
+
+        out.extend(_merge_items(proc_items, inline, st.get("insert_after_seq")))
+
+        # ③ 流程里的必做提醒（漏发名片、漏发示例图、必须改反馈时点）
+        tips = [t.get("text") for t in
+                ((proc.get("send_package") or {}).get("handler_tips") or [])
+                if t.get("text")]
+        if tips:
+            out.append({"stage": st["stage"],
+                        "label": "这一步必须人工做的",
+                        "tips": tips})
+
     return json.dumps(
         {
             "activity_id": activity["id"],
             "activity_title": activity.get("title"),
             "messages": out,
             "unfilled_summary": all_unfilled,
+            "unfilled_reasons": reasons,
             "rule": (
                 "text 是填好数据的成品，必须原样输出给客服，禁止改写、润色、调整数字。"
+                "manual=true 的条目是系统发不了的（公众号名片、示例截图、导航照片），"
+                "必须一条不落地告诉客服由她亲自发。"
                 "unfilled_summary 里的占位符是代码判断不出来的（集合地点/集合时间等每期不同，"
-                "或活动后才产生），必须明确告诉客服需要人工补充，**绝对不要自行编造**。"
+                "或活动后才产生），必须明确告诉客服需要人工补充，绝对不要自行编造；"
+                "unfilled_reasons 里写了每一项为什么填不了、该怎么补。"
             ),
         },
         ensure_ascii=False,

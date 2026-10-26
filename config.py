@@ -29,6 +29,12 @@ MODEL = os.getenv("MODEL_NAME", "deepseek-chat").strip()
 DATA_DIR = ROOT / "data"
 DATA_FILE = Path(os.getenv("ACTIVITIES_FILE", DATA_DIR / "activities.json"))
 
+# ---- 进校预约的被访人信息 ----
+# 这两个值会填进「进校预约提醒」的文案里（{{被访人姓名}} / {{被访人电话}}）。
+# 属于个人信息，只写在 .env，不进仓库、不进 data/。
+VISIT_TARGET_NAME = os.getenv("VISIT_TARGET_NAME", "").strip()
+VISIT_TARGET_PHONE = os.getenv("VISIT_TARGET_PHONE", "").strip()
+
 # ---- 运行参数 ----
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
 MAX_TOOL_ROUNDS = int(os.getenv("MAX_TOOL_ROUNDS", "6"))
@@ -50,6 +56,8 @@ def describe() -> str:
         f"接口地址  : {BASE_URL}",
         f"使用的 Key: {mask(API_KEY)}（来自 .env）",
         f"知识库    : {DATA_FILE}",
+        f"进校预约被访人: {VISIT_TARGET_NAME or '(未配置)'} / "
+        f"{(VISIT_TARGET_PHONE[:3] + '****' + VISIT_TARGET_PHONE[-2:]) if len(VISIT_TARGET_PHONE) > 5 else (VISIT_TARGET_PHONE or '(未配置)')}",
     ]
     if _ENV_KEY_BEFORE and _ENV_KEY_BEFORE != API_KEY:
         lines.append(

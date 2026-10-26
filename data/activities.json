@@ -154,18 +154,19 @@
   },
   "activities": [
     {
-      "id": "S15",
+      "id": "S16",
       "article": "articles/current.md",
-      "session_label": "第十五期",
-      "title": "密语寻踪·少年密码官研学",
-      "subtitle": "智启童心 烧脑又好玩",
-      "date": "2026-10-17",
+      "session_label": "第十六期",
+      "title": "自贸港小商人·集市大冒险",
+      "subtitle": "智启童心·烧脑又好玩",
+      "date": "2026-10-24",
       "weekday": "周六",
-      "time_range": "15:30-17:30",
-      "duration_minutes": 120,
+      "time_range": "15:00-18:00",
+      "duration_minutes": 180,
       "location": "海南大学（海甸校区）",
       "transport": "自驾，自行抵达现场集合",
       "target_audience": "小学 4-6 年级学生",
+      "capacity": 25,
       "pricing": {
         "model": "阶梯同行价（按每人计）",
         "tiers": [
@@ -181,7 +182,7 @@
           },
           {
             "label": "三人同行",
-            "price": 66,
+            "price": 68,
             "unit": "元/人"
           }
         ]
@@ -194,11 +195,12 @@
         "研学专项保险"
       ],
       "insurance": "研学专项保险",
-      "session_no": 15,
+      "grouping": "分组",
+      "session_no": 16,
       "status": "待确认",
-      "_last_updated": "2026-10-26 00:33",
-      "_replaced_from": "第十六期",
-      "_replaced_at": "2026-10-26 00:33"
+      "_last_updated": "2026-10-26 13:33",
+      "_replaced_from": "第十五期",
+      "_replaced_at": "2026-10-26 13:33"
     }
   ],
   "agent_behavior_rules": {
