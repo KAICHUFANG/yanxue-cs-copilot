@@ -274,7 +274,7 @@ python main.py --flow    # 打印活动群文案流程总览
 ├── renderer.py         文案模板填充（保证原文输出，不让模型润色）
 ├── config.py           配置读取与启动自检
 ├── data/
-│   ├── activities.json      当前活动（只有一条）
+│   ├── activities.json      当前活动（只有一条；星期/时长/期次编号不存，读时现算）
 │   ├── group_messages.json  活动群 5 阶段文案模板
 │   ├── processes.json       进校预约流程、门禁、发送包
 │   ├── articles/            推文原文（整篇，不拆字段）
@@ -284,7 +284,6 @@ python main.py --flow    # 打印活动群文案流程总览
 │   │   ├── superseded.jsonl       每次「整条替换」被换掉的旧记录（一行一条）
 │   │   └── article_<期次>.md      被换掉那一期的推文原文（按期次命名，人一眼能找到）
 │   ├── backups/             每次写库前的整文件快照（gitignore）
-│   └── *.raw.md             推文原文摘录（核对用）
 ├── eval/
 │   ├── cases.json           回归集 29 条
 │   ├── cases_real.json      真实家长问法 22 条

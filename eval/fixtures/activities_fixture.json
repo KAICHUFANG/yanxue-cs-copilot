@@ -153,16 +153,13 @@
   "activities": [
     {
       "id": "S16",
-      "session_no": 16,
       "session_label": "第十六期",
       "title": "自贸港小商人·集市大冒险",
       "subtitle": "财商法治主题研学",
       "status": "报名中",
       "_status_basis": "活动日期 2026-10-24 晚于知识库 as_of 2026-10-21",
       "date": "2026-10-24",
-      "weekday": "周六",
       "time_range": "15:00-18:00",
-      "duration_minutes": 180,
       "location": "海南大学（海甸校区）",
       "transport": "自驾，自行抵达现场集合",
       "meeting_point": null,

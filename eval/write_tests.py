@@ -343,6 +343,96 @@ def copy_layer_tests() -> int:
     return bad
 
 
+def data_hygiene_tests() -> int:
+    """数据卫生：派生字段不落盘、备份去重、文档与数据单一来源（纯代码）。"""
+    print("-" * 78)
+    print("数据卫生（不走模型）")
+    print("-" * 78)
+    bad = 0
+
+    def check(name, ok, extra=""):
+        nonlocal bad
+        if not ok:
+            bad += 1
+        print(f"  {'✅' if ok else '❌'} {name}{('   ' + str(extra)) if extra and not ok else ''}")
+
+    reset()
+    raw = json.loads(TMP.read_text(encoding="utf-8"))["activities"][0]
+
+    # ① 派生字段不许出现在文件里
+    leaked = [k for k in store.DERIVED_FIELDS if k in raw]
+    check("activities.json 里没有 weekday / duration_minutes / session_no", not leaked, leaked)
+
+    # ② 读的时候能补齐，而且跟着源头变
+    act = knowledge.get_activity()
+    check("读取时补出 周六", act.get("weekday") == "周六", act.get("weekday"))
+    check("读取时补出 180 分钟", act.get("duration_minutes") == 180, act.get("duration_minutes"))
+    check("读取时补出 session_no=16", act.get("session_no") == 16, act.get("session_no"))
+    moved = store.with_derived({**raw, "date": "2026-11-07", "time_range": "09:00-11:30"})
+    check("改了日期，星期跟着变（11-07 是周六以外的那天）",
+          moved["weekday"] == "周六" and moved["duration_minutes"] == 150,
+          (moved["weekday"], moved["duration_minutes"]))
+
+    # ③ 写完库之后，文件里依然不许出现派生字段
+    store.update_activity(None, {"capacity": 26})
+    raw2 = json.loads(TMP.read_text(encoding="utf-8"))["activities"][0]
+    check("写库后文件里仍然没有派生字段",
+          not [k for k in store.DERIVED_FIELDS if k in raw2])
+    check("写库后 capacity 已更新", raw2.get("capacity") == 26, raw2.get("capacity"))
+
+    # ④ 备份按内容去重：同一份内容连写两次只留一份
+    bak_dir = TMP_DATA / "backups"
+    bak_dir.mkdir(parents=True, exist_ok=True)
+    before = len(list(bak_dir.glob("activities.*.json")))
+    store.update_activity(None, {"capacity": 27})
+    mid = len(list(bak_dir.glob("activities.*.json")))
+    store.update_activity(None, {"status": "报名中"})
+    store.update_activity(None, {"status": "待确认"})      # 回到与 mid 相同的内容
+    after = len(list(bak_dir.glob("activities.*.json")))
+    check("备份按内容去重（写入 3 次，最多只多 2 份）", after - before <= 2, f"{before}→{after}")
+
+    # ⑤ 备份份数上限
+    old_keep = store.BACKUP_KEEP
+    store.BACKUP_KEEP = 3
+    try:
+        for i in range(6):
+            store.update_activity(None, {"capacity": 30 + i})
+        kept = len(list(bak_dir.glob("activities.*.json")))
+    finally:
+        store.BACKUP_KEEP = old_keep
+    check("备份份数不超过上限（设成 3）", kept <= 3, kept)
+
+    # ⑥ processes.json 的重复项已合并
+    procs = json.loads((TMP_DATA / "processes.json").read_text(encoding="utf-8"))
+    cb = procs["campus_booking"]
+    check("send_package 不再有 order 列表", "order" not in cb["send_package"])
+    check("campus_booking 不再有 warnings", "warnings" not in cb)
+    check("entry_gate / id_card_check 只留对外定稿",
+          "text" not in cb["entry_gate"] and "text" not in cb["id_card_check"])
+    check("定稿仍在（删的是重复那份，不是事实）",
+          "北门" in cb["entry_gate"]["ready_to_send_text"]
+          and "身份证" in cb["id_card_check"]["ready_to_send_text"])
+
+    # ⑦ 文档与数据单一来源：模板原文不许再抄进流程文档
+    root = PROJ
+    flow = (root / "docs" / "活动群文案流程.md").read_text(encoding="utf-8")
+    gen = (root / "docs" / "群文案原文.md").read_text(encoding="utf-8")
+    book = json.loads((TMP_DATA / "group_messages.json").read_text(encoding="utf-8"))
+    texts = [m.get("text") for st in book["timeline"] for m in (st.get("messages") or [])
+             if m.get("text") and m.get("type") not in ("manual_send_required", "reference")]
+    in_flow = [t for t in texts if t.splitlines()[0].strip()[:14] in flow]
+    in_gen = [t for t in texts if t.splitlines()[0].strip()[:14] in gen]
+    check("流程文档里不再抄写模板原文", not in_flow, f"仍有 {len(in_flow)} 条")
+    check("生成的群文案原文.md 收录了全部模板", len(in_gen) == len(texts),
+          f"{len(in_gen)}/{len(texts)}")
+
+    # ⑧ 两份临时摘录已清掉
+    check("data/ 下不再有临时摘录 md",
+          not list((TMP_DATA).glob("activities.raw.md"))
+          and not list((TMP_DATA).glob("raw_S16*.md")))
+    return bad
+
+
 def main() -> int:
     config.check()
     total = len(CASES) + len(REPLACE_CASES) + len(STAY_CASES) + 1
@@ -412,6 +502,7 @@ def main() -> int:
     print(f"   回复：{r['answer'].splitlines()[0] if r.get('answer') else ''}")
 
     bad += copy_layer_tests()
+    bad += data_hygiene_tests()
 
     print("\n" + "-" * 78)
     print("普通改字段（不应该被当成换活动）")

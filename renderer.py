@@ -18,6 +18,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import config
+import store
 
 _PLACEHOLDER_RE = re.compile(r"\{\{[^{}]+\}\}")
 
@@ -91,7 +92,8 @@ def load_activity(activity_id: str) -> Optional[Dict[str, Any]]:
         kb = json.load(f)
     for a in kb["activities"]:
         if a["id"] == key:
-            return a
+            # 派生字段（weekday 等）由 store 现算，文件里不存
+            return store.with_derived(a)
     return None
 
 

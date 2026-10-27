@@ -390,6 +390,10 @@ def _valid_updates(updates: Dict[str, Any]):
     field_words = _field_words()
     good, bad = {}, []
     for k, v in (updates or {}).items():
+        # 派生字段（星期/时长/期次编号）由 date / time_range / session_label 自动算出，
+        # 手填只会制造不一致（「10月25日（周六）」这种）。模型偶尔还是会填，静默丢掉。
+        if k in store.DERIVED_FIELDS:
+            continue
         if k not in store.ALLOWED_FIELDS:
             bad.append(f"未知字段 {k}")
         elif v in _EMPTY:

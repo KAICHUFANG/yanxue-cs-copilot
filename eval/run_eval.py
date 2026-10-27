@@ -36,6 +36,11 @@ sys.path.insert(0, str(PROJ))
 
 import agent        # noqa: E402
 import config       # noqa: E402
+import store        # noqa: E402
+
+# 只隔离 ACTIVITIES_FILE 是不够的：写库用例的备份会写进真实 data/backups。
+# 这里把备份目录也指到 eval/ 下，跑评测不再污染业务数据。
+store.BACKUP_DIR = EVAL_DIR / "backups"
 
 
 def load_cases() -> list:

@@ -26,6 +26,7 @@ v2 的做法是「问一句 → 猜该查什么 → 调工具」。它依赖两�
     模型只干一件事：用给定资料回答家长的自然语言问题。
 """
 
+import hashlib
 import json
 import re
 import shutil
@@ -42,7 +43,10 @@ def _load_json(path) -> Dict[str, Any]:
 
 
 def load_activities() -> Dict[str, Any]:
-    return _load_json(config.DATA_FILE)
+    """读库。派生字段（星期/时长/期次编号）在这里补齐，上层直接用。"""
+    kb = _load_json(config.DATA_FILE)
+    kb["activities"] = [store.with_derived(a) for a in (kb.get("activities") or [])]
+    return kb
 
 
 def load_processes() -> Dict[str, Any]:
@@ -204,8 +208,11 @@ def save_review(text: str, label: str = "") -> Dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     replaced = path.exists()
     if replaced:
+        # 文件名要带内容哈希：只靠到「秒」的时间戳，同一秒内保存两次会互相覆盖，
+        # 备份就静默丢了一份（这个坑是测试跑太快撞出来才发现的）。
+        digest = hashlib.md5(path.read_bytes()).hexdigest()[:8]
         bak = (config.DATA_DIR / "backups"
-               / f"review.{safe}.{time.strftime('%Y%m%d-%H%M%S')}.md")
+               / f"review.{safe}.{time.strftime('%Y%m%d-%H%M%S')}.{digest}.md")
         bak.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, bak)
     path.write_text(text + "\n", encoding="utf-8")

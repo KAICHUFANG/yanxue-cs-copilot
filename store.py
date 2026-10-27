@@ -13,9 +13,9 @@
         4. 写后体检   —— 返回「这一期还缺哪些字段」，让客服知道下一步问什么
 """
 
+import hashlib
 import json
 import re
-import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -24,6 +24,7 @@ import config
 
 DATA_DIR = Path(config.DATA_DIR)
 BACKUP_DIR = DATA_DIR / "backups"
+BACKUP_KEEP = 60          # 备份最多留多少份（超过就删最旧的）
 
 # 允许客服更新的字段（白名单）。不在表里的键会被拒绝，防止模型乱写。
 ALLOWED_FIELDS: Dict[str, str] = {
@@ -32,9 +33,7 @@ ALLOWED_FIELDS: Dict[str, str] = {
     "subtitle": "副标题 / 主题",
     "status": "报名中 / 已结束 / 待确认",
     "date": "活动日期，YYYY-MM-DD",
-    "weekday": "星期，如 周六",
     "time_range": "活动时段，如 15:00-18:00",
-    "duration_minutes": "时长（分钟，数字）",
     "location": "活动地点",
     "transport": "出行方式",
     "meeting_point": "集合地点",
@@ -70,6 +69,60 @@ REQUIRED_FOR_COPY = [
 
 _STATUS_ENUM = {"报名中", "已结束", "待确认"}
 
+# ---------------------------------------------------------------- 派生字段
+# 这三个字段都能从别处算出来，所以**不存进文件**：
+#   weekday           ← date（2026-10-24 一定是周六）
+#   duration_minutes  ← time_range（15:00-18:00 = 180 分钟）
+#   session_no        ← session_label（第十六期 → 16）
+#
+# 为何不允许手填：同一件事存两份，早晚不一致。真实后果是把
+# 「10月25日（周六）」这种话发到家长群——日期改了星期没改，没人看得出来。
+# 现在读的时候现算（with_derived），写的时候再摘掉（_write），文件里永不出现。
+DERIVED_FIELDS = ("weekday", "duration_minutes", "session_no")
+_WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+
+def _derive_weekday(date_str: Any) -> Optional[str]:
+    try:
+        y, m, d = (int(x) for x in str(date_str).split("-"))
+        return _WEEKDAYS[datetime(y, m, d).weekday()]
+    except Exception:
+        return None
+
+
+def _derive_duration(time_range: Any) -> Optional[int]:
+    m = re.match(r"\s*(\d{1,2}):(\d{2})\s*[-–~至]\s*(\d{1,2}):(\d{2})",
+                 str(time_range or ""))
+    if not m:
+        return None
+    h1, m1, h2, m2 = (int(x) for x in m.groups())
+    minutes = (h2 * 60 + m2) - (h1 * 60 + m1)
+    return minutes if minutes > 0 else None
+
+
+def derive_fields(act: Dict[str, Any]) -> Dict[str, Any]:
+    """从 date / time_range / session_label 算出派生字段。算不出就不给。"""
+    out: Dict[str, Any] = {}
+    wd = _derive_weekday(act.get("date"))
+    if wd:
+        out["weekday"] = wd
+    dm = _derive_duration(act.get("time_range"))
+    if dm:
+        out["duration_minutes"] = dm
+    no = session_number(act.get("session_label"))
+    if no is not None:
+        out["session_no"] = no
+    return out
+
+
+def with_derived(act: Dict[str, Any]) -> Dict[str, Any]:
+    """读的时候把派生字段补上，让上层（面板/文案/体检）看起来字段齐全。"""
+    if not isinstance(act, dict):
+        return act
+    out = dict(act)
+    out.update(derive_fields(act))
+    return out
+
 # 中文数字：期次常写成「第十五期」，要能转成 15，用来给记录换编号
 _CN_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
               "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
@@ -103,8 +156,11 @@ def session_number(label: Any) -> Optional[int]:
 
 # ---------------------------------------------------------------- 基础读写
 def load() -> Dict[str, Any]:
+    """读库。派生字段在这里补上——上层不需要知道它们是算出来的。"""
     with open(config.DATA_FILE, encoding="utf-8") as f:
-        return json.load(f)
+        kb = json.load(f)
+    kb["activities"] = [with_derived(a) for a in (kb.get("activities") or [])]
+    return kb
 
 
 def active_session_id() -> Optional[str]:
@@ -120,16 +176,74 @@ def active_session_id() -> Optional[str]:
 
 
 def _backup() -> str:
+    """写库前的快照。相同内容只存一份，并限制总份数。
+
+    为什么不能只加个时间戳就完事（真实踩过的坑）：
+        高频写库时同一个内容会被连续存成好几份（实测 446 个文件里有 302 个
+        字节完全相同，最多的一组重复了 118 份，占 7.3 MB）。
+        备份是为了回滚，不是为了堆垃圾——按内容哈希去重 + 只留最近 60 份。
+    """
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    raw = Path(config.DATA_FILE).read_bytes()
+    digest = hashlib.md5(raw).hexdigest()[:12]
+
+    same = _backup_index().get(digest)
+    if same:
+        _prune_backups()                     # 顺手裁一次，保证上限永远有效
+        return str(same)                     # 内容一模一样，不再存第二份
+
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    dst = BACKUP_DIR / f"activities.{stamp}.json"
-    shutil.copy2(config.DATA_FILE, dst)
+    dst = BACKUP_DIR / f"activities.{stamp}.{digest}.json"
+    dst.write_bytes(raw)
+    _prune_backups()
     return str(dst)
 
 
+def _backup_index() -> Dict[str, Path]:
+    """内容哈希 → 已有备份路径。老文件名没有哈希段，就现算。"""
+    idx: Dict[str, Path] = {}
+    if not BACKUP_DIR.exists():
+        return idx
+    for p in sorted(BACKUP_DIR.glob("activities.*.json")):
+        try:
+            digest = p.stem.split(".")[-1]
+            if len(digest) != 12:
+                digest = hashlib.md5(p.read_bytes()).hexdigest()[:12]
+            idx.setdefault(digest, p)
+        except OSError:
+            continue
+    return idx
+
+
+def _prune_backups(keep: Optional[int] = None) -> int:
+    """只留最近 keep 份，返回删掉几个。
+
+    注意 keep 不能写成 `keep: int = BACKUP_KEEP`：默认参数在**函数定义时**求值，
+    之后改 store.BACKUP_KEEP 不会生效（这个坑测试当场抓到了）。
+    """
+    keep = BACKUP_KEEP if keep is None else keep
+    files = sorted(BACKUP_DIR.glob("activities.*.json"))
+    if len(files) <= keep:
+        return 0
+    removed = 0
+    for p in files[: len(files) - keep]:
+        try:
+            p.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def _write(kb: Dict[str, Any]) -> None:
+    """落盘前把派生字段摘掉：文件里只留唯一真相（date / time_range / session_label）。"""
+    out = dict(kb)
+    out["activities"] = [
+        {k: v for k, v in a.items() if k not in DERIVED_FIELDS}
+        for a in (kb.get("activities") or [])
+    ]
     with open(config.DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(kb, f, ensure_ascii=False, indent=2)
+        json.dump(out, f, ensure_ascii=False, indent=2)
 
 
 def _archive_record(record: Dict[str, Any], reason: str) -> str:
@@ -261,7 +375,7 @@ def update_activity(activity_id: Optional[str], updates: Dict[str, Any],
         if not ok:
             errors.append(f"{field}: {msg}")
             continue
-        accepted[field] = int(value) if field in ("capacity", "duration_minutes") else value
+        accepted[field] = int(value) if field == "capacity" else value
 
     if errors:
         return {"ok": False, "error": "字段格式有问题，本次未写入", "details": errors}
@@ -287,8 +401,7 @@ def update_activity(activity_id: Optional[str], updates: Dict[str, Any],
 
         no = session_number(new.get("session_label"))
         if no is not None:
-            new["session_no"] = no
-            new["id"] = f"S{no:02d}"
+            new["id"] = f"S{no:02d}"      # session_no 不写，读的时候由 label 算
         # 期次没写或认不出 → id 沿用旧的：编号错会串期，串期比没编号麻烦得多
 
         new.setdefault("status", "待确认")
@@ -296,8 +409,11 @@ def update_activity(activity_id: Optional[str], updates: Dict[str, Any],
         new["_replaced_from"] = str(old.get("session_label") or old.get("id") or "")
         new["_replaced_at"] = new["_last_updated"]
 
+        # 派生字段不算「被丢掉的字段」：它们本来就不该存在文件里
         dropped = sorted(k for k in old
-                         if k not in new and k not in ("id", "article"))
+                         if k not in new
+                         and k not in ("id", "article")
+                         and k not in DERIVED_FIELDS)
         kb["activities"] = [new]
         target = new
     else:
