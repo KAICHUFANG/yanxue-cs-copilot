@@ -154,17 +154,15 @@
   },
   "activities": [
     {
-      "id": "S16",
+      "id": "S18",
       "article": "articles/current.md",
-      "session_label": "第十六期",
-      "title": "自贸港小商人·集市大冒险",
-      "subtitle": "智启童心·烧脑又好玩",
-      "date": "2026-10-24",
-      "time_range": "15:00-18:00",
-      "location": "海南大学（海甸校区）",
-      "transport": "自驾，自行抵达现场集合",
-      "target_audience": "小学 4-6 年级学生",
-      "capacity": 25,
+      "session_label": "第十八期",
+      "title": "“山海科普研学”第十八期丨“海大蓝境”海洋生物标本馆",
+      "subtitle": "看标本 · 听故事 · 捏自己的海洋小伙伴",
+      "date": "2026-10-31",
+      "time_range": "15:00-17:00",
+      "location": "海南大学（海甸校区）海洋生物标本馆",
+      "capacity": 20,
       "pricing": {
         "model": "阶梯同行价（按每人计）",
         "tiers": [
@@ -188,16 +186,17 @@
       "fee_includes": [
         "课程设计",
         "场地",
-        "全套活动物料",
+        "活动所需物料",
         "饮用水",
-        "研学专项保险"
+        "专项研学保险"
       ],
-      "insurance": "研学专项保险",
-      "grouping": "分组",
       "status": "待确认",
-      "_last_updated": "2026-10-26 13:33",
-      "_replaced_from": "第十五期",
-      "_replaced_at": "2026-10-26 13:33"
+      "_last_updated": "2026-10-29 17:40",
+      "_replaced_from": "第十六期",
+      "_replaced_at": "2026-10-29 17:36",
+      "target_audience": "3-9年级学生",
+      "indoor_outdoor": "室内",
+      "meeting_time": "15:00"
     }
   ],
   "agent_behavior_rules": {

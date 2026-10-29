@@ -38,6 +38,49 @@ FONT_CSS = """
   .block-container { padding-top: 2rem; padding-bottom: 6rem; }
   div[data-testid="stMetricValue"] { font-size: 1.4rem; }
   .tiny { color: #888; font-size: 0.82rem; }
+
+  /* ================= 右侧状态面板：独立栏位 =================
+     客服的诉求：对话一长，想看一眼缺口就得往上滑半天，因为那块面板随页面一起走。
+
+     为什么不用 position: sticky（试过，不行）：
+         sticky 只能在**父容器的高度范围**内停泊。对话滚到最底时父容器已到头，
+         面板会被顶出屏幕（实测 top 变成 -130px），而那正好是客服看最新消息的位置。
+         给父容器加底部留白也无效：留白让可滚动区域同步变大，钳制位置 1:1 跟着跑
+         （实测 0/160/320/480/640px 留白，面板 top 依次是 -130/-290/-441/-601/-761）。
+
+     所以用 position: fixed 把它钉在视口右上角，与父容器无关。
+     实测：滚到 0 / 800 / 1600 / 最底，面板 top 恒为 58px。
+
+     两个必需配套：
+       ① 左侧对话列要 max-width 让位，否则文字会钻到面板底下；
+       ② 面板必须有不透明底色（否则消息会从后面穿过去），
+          而 Streamlit 没有暴露主题背景变量，所以用 prefers-color-scheme 兜底。
+
+     窄屏（<1000px）不启用：流式布局本来就把两列上下堆叠，钉住反而遮挡对话。---- */
+  :root { --panel-bg: #ffffff; --panel-line: rgba(0, 0, 0, 0.12); }
+  @media (prefers-color-scheme: dark) {
+    :root { --panel-bg: #0e1117; --panel-line: rgba(255, 255, 255, 0.16); }
+  }
+
+  @media (min-width: 1000px) {
+    div[data-testid="stColumn"]:has(.status-anchor) {
+        position: fixed;
+        top: 3.6rem;
+        right: 1rem;
+        width: 22rem;
+        flex: none;
+        max-height: calc(100vh - 9rem);
+        overflow-y: auto;
+        z-index: 50;
+        padding: 0.2rem 0.5rem 0.6rem 0.9rem;
+        background: var(--panel-bg);
+        border-left: 1px solid var(--panel-line);
+    }
+    div[data-testid="stHorizontalBlock"]:has(.status-anchor)
+      > div[data-testid="stColumn"]:first-child {
+        max-width: calc(100% - 23.6rem);
+    }
+  }
 </style>
 """
 st.markdown(FONT_CSS, unsafe_allow_html=True)
@@ -92,6 +135,10 @@ def _fmt(value) -> str:
 left, right = st.columns([2.3, 1], gap="large")
 
 with right:
+    # 这个空锚点只干一件事：让上面的 CSS 能精确认出"装面板的那一列"。
+    # 它不显示任何内容（高 0），删了面板就不再固定。
+    st.markdown("<div class='status-anchor'></div>", unsafe_allow_html=True)
+
     st.markdown("#### 当前活动")
     st.markdown(
         f"**{act.get('session_label', '—')}**　{act.get('title', '')}"
