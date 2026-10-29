@@ -18,6 +18,14 @@ _ENV_KEY_BEFORE = os.environ.get("DEEPSEEK_API_KEY", "").strip()
 #   导致程序报 401 而你盯着 .env 里的新 key 找不到原因（踩过这个坑）。
 load_dotenv(ROOT / ".env", override=True)
 
+# ---- 代码版本 ----
+# 跨模块改动（新增/改名函数）时手动加一。界面用它检测「进程还是旧的」：
+# Streamlit 只重跑入口脚本，已 import 的模块留在内存里不会重新加载，
+# 于是新脚本调用旧模块里不存在的函数，报一个看不懂的
+#   AttributeError: module 'knowledge' has no attribute 'load_team_info'
+# 这张版本号就是为了把这种情况变成一句能看懂的话。
+CODE_VERSION = 7
+
 # ---- 模型相关 ----
 API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()

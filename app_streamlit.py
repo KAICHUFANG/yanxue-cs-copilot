@@ -34,6 +34,23 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ---------------------------------------------------------------- 旧进程自检
+# 真实遇到过：新增 knowledge.load_team_info 之后，界面直接报
+#   AttributeError: module 'knowledge' has no attribute 'load_team_info'
+# 看着像代码坏了，其实只是**运行中的进程还是旧代码**（Streamlit 只重跑本脚本，
+# 已 import 的模块不会重新加载）。这里把「重启」这句话直接摆到界面上。
+_EXPECT_CODE_VERSION = 7
+if getattr(config, "CODE_VERSION", 0) != _EXPECT_CODE_VERSION:
+    st.error("**页面代码已更新，但当前运行的进程还是旧的。**"
+             + chr(10) + chr(10)
+             + "关掉那个黑色的启动窗口，重新双击「启动工作台.bat」就好。"
+             + chr(10) + chr(10)
+             + f"（代码版本 {_EXPECT_CODE_VERSION}，进程里是 "
+             + f"{getattr(config, 'CODE_VERSION', '未知')}）")
+    st.caption("改完 .py 文件后 Streamlit 会重跑脚本，但已经加载的模块要重启进程才会更新。")
+    st.stop()
+
+
 FONT_CSS = """
 <style>
   .block-container { padding-top: 2rem; padding-bottom: 6rem; }
