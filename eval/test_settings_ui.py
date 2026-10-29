@@ -143,7 +143,11 @@ def main() -> int:
         check("界面上没有「使用记录」面板（记录只落文件）",
               "使用记录" not in texts(at), "界面上仍有使用记录相关文字")
         config.CHAT_LOG_OPERATOR = "测试客服"      # 现在从 .env 读，测试里直接给
-        at.chat_input[0].set_value("集合地点在哪").run()
+        # 输入框已从左栏表单提交（不再是全宽 chat_input）
+        at.text_input(key="ask_text").set_value("集合地点在哪")
+        _send = [b for b in at.button if (b.label or "") == "发送"]
+        check("左栏里有「发送」按钮", bool(_send), str([b.label for b in at.button]))
+        _send[0].click().run()
         rows = chatlog.tail(10)
         check("问一句之后日志里有 1 条", len(rows) == 1, f"实际 {len(rows)} 条")
         if rows:

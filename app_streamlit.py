@@ -53,7 +53,7 @@ if getattr(config, "CODE_VERSION", 0) != _EXPECT_CODE_VERSION:
 
 FONT_CSS = """
 <style>
-  .block-container { padding-top: 2rem; padding-bottom: 6rem; }
+  .block-container { padding-top: 4.2rem; padding-bottom: 2rem; }
   div[data-testid="stMetricValue"] { font-size: 1.4rem; }
   .tiny { color: #888; font-size: 0.82rem; }
 
@@ -71,23 +71,24 @@ FONT_CSS = """
 
      两个必需配套：
        ① 左侧对话列要 max-width 让位，否则文字会钻到面板底下；
-       ② 面板必须有不透明底色（否则消息会从后面穿过去），
-          而 Streamlit 没有暴露主题背景变量，所以用 prefers-color-scheme 兜底。
+       ② 面板必须有不透明底色（否则消息会从后面穿过去）。
+          颜色不能用 Fixed 值、也不能靠 prefers-color-scheme 猜：
+          st.context.theme 只给一个 type（实测明亮实例里也报 dark，不可信），
+          而系统主题跟 Streamlit 里手动切的主题是两回事。
+          所以用一小段 JS 量页面真实背景色写进 --panel-bg（见下方 THEME_SYNC_HTML）。
 
      窄屏（<1000px）不启用：流式布局本来就把两列上下堆叠，钉住反而遮挡对话。---- */
-  :root { --panel-bg: #ffffff; --panel-line: rgba(0, 0, 0, 0.12); }
-  @media (prefers-color-scheme: dark) {
-    :root { --panel-bg: #0e1117; --panel-line: rgba(255, 255, 255, 0.16); }
-  }
+  :root { --panel-bg: __PANEL_BG__; --panel-line: __PANEL_LINE__; }
+__THEME_FALLBACK__
 
   @media (min-width: 1000px) {
     div[data-testid="stColumn"]:has(.status-anchor) {
         position: fixed;
-        top: 3.6rem;
+        top: 4rem;
         right: 1rem;
         width: 22rem;
         flex: none;
-        max-height: calc(100vh - 9rem);
+        max-height: calc(100vh - 6rem);
         overflow-y: auto;
         z-index: 50;
         padding: 0.2rem 0.5rem 0.6rem 0.9rem;
@@ -101,7 +102,50 @@ FONT_CSS = """
   }
 </style>
 """
+# 右侧固定面板必须有不透明底色，否则消息会从它后面穿过去。
+# 但「底色该用什么」不能靠猜：
+#   · st.context.theme 只给一个 type（实测在明亮实例里也报 dark），不可靠；
+#   · prefers-color-scheme 跟的是「系统」主题，用户在 Streamlit 里手动切成明亮时就不对了
+#     （这就是「明亮模式下侧栏有一块不变白」的原因）。
+# 所以注入一小段 JS：直接量页面真实背景色，写进 CSS 变量，并监听主题切换。
+# 组件 iframe 与主页面同源，可以访问 parent.document；万一被拦，CSS 里的默认值兜底。
+THEME_SYNC_HTML = """
+<script>
+(function () {
+  function paint() {
+    try {
+      var d = window.parent.document;
+      var bg = window.parent.getComputedStyle(d.body).backgroundColor || "";
+      var solid = /^rgba?\(/.test(bg) && bg.indexOf("rgba(0, 0, 0, 0)") !== 0;
+      var isDark = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(bg);
+      var dark = false;
+      if (isDark) {
+        dark = (parseInt(isDark[1], 10) + parseInt(isDark[2], 10) + parseInt(isDark[3], 10)) < 3 * 128;
+      }
+      var root = d.documentElement;
+      root.style.setProperty("--panel-bg", solid ? bg : (dark ? "#0e1117" : "#ffffff"));
+      root.style.setProperty("--panel-line", dark ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.12)");
+    } catch (e) { /* 被沙箱拦住就用 CSS 默认值 */ }
+  }
+  paint();
+  try {
+    new MutationObserver(paint).observe(window.parent.document.documentElement,
+      { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
+  } catch (e) {}
+  setInterval(paint, 1200);
+})();
+</script>
+"""
+
+# CSS 默认值：明亮。真正的颜色由上面的 JS 覆盖（读不到就保持白色，安全）
+FONT_CSS = FONT_CSS.replace("__PANEL_BG__", "#ffffff").replace("__PANEL_LINE__", "rgba(0,0,0,0.12)")
+FONT_CSS = FONT_CSS.replace("__THEME_FALLBACK__", "  /* 颜色由页面内 JS 按真实背景色写入 --panel-bg */")
 st.markdown(FONT_CSS, unsafe_allow_html=True)
+try:
+    from streamlit.components.v1 import html as _html
+    _html(THEME_SYNC_HTML, height=0)
+except Exception:
+    pass
 
 
 # ---------------------------------------------------------------- 启动自检
@@ -256,13 +300,6 @@ with right:
         st.caption("点右上角图标复制")
         st.code(st.session_state.copy_text, language=None)
 
-    st.divider()
-    st.markdown("<span class='tiny'>本次会话 "
-                f"{st.session_state.tokens} tokens</span>", unsafe_allow_html=True)
-    if st.button("清空对话", width="stretch"):
-        st.session_state.msgs = []
-        st.rerun()
-
 
 with left:
     st.markdown("#### 对话")
@@ -301,17 +338,31 @@ with left:
                     for n in m["notes"]:
                         st.markdown(f"· {n}")
 
+    # ---- 输入区：放在对话这一栏里，不再用全宽的 st.chat_input ----
+    # 原来 chat_input 固定在页面底部、横跨整个宽度，右栏底部会被它盖住
+    # （「清空对话」看不见就是这个原因），而且输入框跟对话不在一个区域，
+    # 看着不像「在这一栏里说话」。现在改成左栏内的表单。
+    st.divider()
+    with st.form("ask_form", clear_on_submit=True, border=False):
+        _in1, _in2 = st.columns([6, 1])
+        prompt_in = _in1.text_input(
+            "输入", label_visibility="collapsed", key="ask_text",
+            placeholder="说人话就行：问问题，或直接补信息（Enter 也能发）")
+        submitted = _in2.form_submit_button("发送", use_container_width=True)
 
-# ---------------------------------------------------------------- 输入
-with st.expander("发送时一并生成客服提示", expanded=False):
-    want_notes = st.checkbox(
-        "同时生成「该注意什么 / 该去找谁确认」的内部提示（不发给家长）",
-        value=True,
-    )
+    _t1, _t2, _t3 = st.columns([1.0, 1.2, 2.0])
+    if _t1.button("清空对话", key="clear_chat", use_container_width=True):
+        st.session_state.msgs = []
+        st.rerun()
+    _t2.markdown("<span class='tiny'>本次会话 "
+                 f"{st.session_state.tokens} tokens</span>", unsafe_allow_html=True)
+    want_notes = _t3.checkbox("回复后附「客服提示」（不发给家长）",
+                              value=True, key="want_notes")
 
-prompt = st.chat_input("说人话就行：问问题，或直接补信息")
 
-if prompt:
+# ---------------------------------------------------------------- 处理提交
+if submitted and prompt_in.strip():
+    prompt = prompt_in.strip()
     hist = [{"role": m["role"], "content": m["content"]}
             for m in st.session_state.msgs[-6:] if m.get("content")]
     st.session_state.msgs.append({"role": "user", "content": prompt})
