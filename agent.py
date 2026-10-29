@@ -110,6 +110,18 @@ _CTX_SYSTEM = """你是「山海科普研学」的客服助手。
 没做条件判断就进了上下文——现在数据层已经改成「集合点为空时才生效」，
 但你在写话时也要守住这条。）
 
+## 具体人名：资料没明说，就不许猜
+凡涉「谁带队 / 谁主讲 / 谁负责 / 请的哪位老师」这类具体人名，
+只有原文**明确写了「由谁担任」**才能答；否则一律用客服的口语推掉：
+「具体是哪位老师带队，我确认一下再回您」／「这个我帮您问一下」。
+
+**不要说「我这边没有……的记录」**——那是系统腔（本项目已明令禁止）。
+
+**署名不是证据**：推文末尾的「文丨某某」「图丨某某」「审核丨某某」「编辑丨某某」
+是公众号排版信息，不能当成带队老师、主讲人、负责人。
+（真实踩过：推文末尾有「审核丨付广」，模型就答「付广老师带队」，
+而付广其实是进校预约的被访人，跟带队毫无关系。）
+
 ## 查不到 / 还没定的时候，用客服的话说
 · 「这个我确认一下再回您」／「集合点还没定，定了我在群里发定位和导航照片」／「以当期推文为准」
 · **不要说「我这边没有记录」**——那是系统腔，家长会觉得在跟机器人讲话
@@ -309,6 +321,13 @@ def _field_menu() -> str:
         cur = act.get(k)
         cur_txt = "（空）" if cur in _EMPTY else "（现值：" + str(cur)[:24] + "）"
         lines.append(f"- {k}：{desc}{cur_txt}")
+    # 团队级字段（被访人）也允许在对话里改，但它们不属于某一期，
+    # 写在 activities.json 顶层 team_info，不进 activities[0]。
+    _team = knowledge.load_team_info()
+    for k, desc in store.TEAM_FIELDS.items():
+        cur = _team.get(k) or ""
+        cur_txt = "（空）" if not cur else "（现值：" + str(cur)[:24] + "）"
+        lines.append(f"- {k}：{desc}（团队级，跨期通用）{cur_txt}")
     return "\n".join(lines)
 
 
@@ -437,7 +456,7 @@ def _valid_updates(updates: Dict[str, Any]):
         # 手填只会制造不一致（「10月25日（周六）」这种）。模型偶尔还是会填，静默丢掉。
         if k in store.DERIVED_FIELDS:
             continue
-        if k not in store.ALLOWED_FIELDS:
+        if k not in store.ALLOWED_FIELDS and k not in store.TEAM_FIELDS:
             bad.append(f"未知字段 {k}")
         elif v in _EMPTY:
             bad.append(f"{k} 是空值")
@@ -918,6 +937,26 @@ def answer_chat(
     # ---- update ----
     if decided["kind"] == "update" and decided["updates"]:
         good, bad = _valid_updates(decided["updates"])
+        # 团队级字段（被访人）要跟当期字段分开写：它们进 activities.json 顶层，
+        # 绝不能走 update_activity——换期时整条替换会把 activities[0] 清空，
+        # 团队信息跟着丢（这类“换期把无关信息带走”的事故已经踩过一次）。
+        team_part = {k: v for k, v in good.items() if k in store.TEAM_FIELDS}
+        good = {k: v for k, v in good.items() if k not in store.TEAM_FIELDS}
+        team_note = ""
+        if team_part:
+            knowledge.save_team_info(str(team_part.get("visit_target_name", "")),
+                                     str(team_part.get("visit_target_phone", "")))
+            team_note = ("团队信息已更新："
+                         + "、".join(f"{store.TEAM_FIELDS[k]}={v}"
+                                    for k, v in team_part.items())
+                         + "（跨期通用，之后生成的进校预约文案都用这个）")
+            if verbose:
+                print(f"  👥 团队信息写入：{team_part}")
+        if team_part and not good:
+            # 只改了团队信息，没动这一期的字段 → 不必再调模型写确认语
+            return done({"answer": team_note + "。",
+                         "trace": ["classify", "save_team_info"],
+                         "wrote": sorted(team_part)})
         # 粘的是另一期的推文 → 整条替换，没抽到的字段一律清空。
         # 只做合并的话，新一期会继承上一期的集合点/名额/室内外，客服就答错期了。
         replace = _is_other_session(decided) and bool(good)
@@ -928,6 +967,8 @@ def answer_chat(
             ok = bool(res.get("ok"))
             err = "" if ok else str(res.get("error") or res)
             extras: List[str] = []
+            if team_note:
+                extras.append(team_note)
             if article_saved:
                 extras.append(f"整篇推文原文也已存档（{article_saved}），"
                               f"以后问活动内容直接读原文，不用再拆字段")
@@ -944,7 +985,7 @@ def answer_chat(
                 extras.append(f"上一期推文原文已归档到 {article_archived}，后面要找回还能查。")
             out = _confirm_written(question, good, ok, err,
                                    extra="\n".join(extras))
-            out["wrote"] = sorted(good) if ok else []
+            out["wrote"] = sorted(list(good) + list(team_part)) if ok else []
             out["write_errors"] = [] if ok else [err]
             out["article_saved"] = article_saved
             out["replaced"] = bool(ok and replace)

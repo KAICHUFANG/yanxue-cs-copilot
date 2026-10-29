@@ -32,6 +32,11 @@ TMP_DATA = EVAL_DIR / "tmp_data"          # 整个 data 目录的副本
 # 靠 git checkout 才恢复。所以这里把整个 data 目录复制出来，连 DATA_DIR 一起指过去。
 shutil.rmtree(TMP_DATA, ignore_errors=True)
 shutil.copytree(PROJ / "data", TMP_DATA, ignore=shutil.ignore_patterns("backups"))
+# 推文原文也要冻结（理由见 run_eval.py 里的注释）：题库的 activitiy 是旧的，
+# 真实 current.md 却随换期变化，混在一起会让答案不可复现。
+_ART = EVAL_DIR / "fixtures" / "article.md"
+if _ART.exists():
+    shutil.copy2(_ART, TMP_DATA / "articles" / "current.md")
 
 shutil.copy2(FIXTURE, TMP)
 os.environ["ACTIVITIES_FILE"] = str(TMP)

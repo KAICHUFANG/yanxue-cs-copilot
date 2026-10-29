@@ -31,6 +31,7 @@ from streamlit.testing.v1 import AppTest        # noqa: E402
 
 import config                                   # noqa: E402
 import store                                    # noqa: E402
+import agent                                    # noqa: E402
 
 config.DATA_DIR = TMP_DATA
 config.DATA_FILE = TMP_DATA / "activities.json"
@@ -81,8 +82,8 @@ def main() -> int:
               str(keys))
         check("被访人不在 API 面板里（它是业务信息，不是 API 配置）",
               "cfg_name" not in keys and "cfg_phone" not in keys, str(keys))
-        check("团队信息是独立一栏", all(k in keys for k in ("team_name", "team_phone")),
-              str(keys))
+        check("团队信息也不在界面上（走对话框改，用户要求移出窗口）",
+              "team_name" not in keys and "team_phone" not in keys, str(keys))
 
         # ---- ② 不改 Key，只点「保存并测试连接」----
         at.button(key="cfg_save").click().run()
@@ -110,26 +111,28 @@ def main() -> int:
         check("坏模型名验证完后已还原为可用模型", config.MODEL in ("deepseek-chat", "deepseek-flash"),
               config.MODEL)
 
-        # ---- ④ 团队信息：独立保存，且换期不丢 ----
-        import json
-        import store
-        at.text_input(key="team_name").set_value("测试老师")
-        at.text_input(key="team_phone").set_value("13800001111")
-        at.button(key="team_save").click().run()
-        check("保存团队信息不报错", not at.exception,
-              str(at.exception[0].value) if at.exception else "")
+        # ---- ④ 团队信息：界面上没有面板，走对话框改，且换期不丢 ----
+        import knowledge
+        check("界面上没有「团队信息」面板（用户要求移出窗口）",
+              "团队信息" not in texts(at), "界面上仍有团队信息相关文字")
+
         kb = json.loads(TMP_ACT.read_text(encoding="utf-8"))
-        check("团队信息存在 activities.json 顶层",
-              (kb.get("team_info") or {}).get("visit_target_name") == "测试老师")
-        check("团队信息没有被写进 .env",
-              "测试老师" not in ENV.read_text(encoding="utf-8"))
+        before_team = dict(kb.get("team_info") or {})
+        r = agent.answer_chat("被访人电话改成 13900002222")
+        check("走对话框改团队信息，走的是 save_team_info",
+              "save_team_info" in (r.get("trace") or []), str(r.get("trace")))
+        kb2 = json.loads(TMP_ACT.read_text(encoding="utf-8"))
+        check("新电话写进了顶层 team_info",
+              (kb2.get("team_info") or {}).get("visit_target_phone") == "13900002222")
+        check("没写进 activities[0]（否则换期会丢）",
+              "visit_target_phone" not in (kb2.get("activities") or [{}])[0])
         # 模拟换期：整条替换后 team_info 必须还在
         store.update_activity(None, {"session_label": "第九十九期"}, replace=True)
-        kb2 = json.loads(TMP_ACT.read_text(encoding="utf-8"))
-        check("换期后团队信息还在（因为不在 activities[0] 里）",
-              (kb2.get("team_info") or {}).get("visit_target_name") == "测试老师")
-        check("换期后 activities[0] 里没有 team_info 副本",
-              "team_info" not in (kb2.get("activities") or [{}])[0])
+        kb3 = json.loads(TMP_ACT.read_text(encoding="utf-8"))
+        check("换期后团队信息还在",
+              (kb3.get("team_info") or {}).get("visit_target_phone") == "13900002222")
+        knowledge.save_team_info(before_team.get("visit_target_name", ""),
+                                before_team.get("visit_target_phone", ""))
 
         # ---- ⑤ 使用记录：问一句就应该落一行日志 ----
         import chatlog

@@ -225,7 +225,7 @@
   "team_info": {
     "_scope": "团队级、跨期不变的信息。放在顶层而不是 activities[0] 里，换期时不会被替换掉。",
     "visit_target_name": "付广",
-    "visit_target_phone": "13800000000",
+    "visit_target_phone": "13900002222",
     "note": "进校预约提醒文案里的「被访人」。改这两项走界面上的「团队信息」，不要改 .env。"
   }
 }

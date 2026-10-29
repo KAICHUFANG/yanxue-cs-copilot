@@ -50,6 +50,14 @@ ALLOWED_FIELDS: Dict[str, str] = {
     "dress_code": "着装要求",
 }
 
+# 团队级字段：写在 activities.json **顶层** team_info 里，不属于某一期。
+# 单列一组，是因为它们绝不能走 update_activity —— 那个函数只写 activities[0]，
+# 换期时整条替换会把它们一起清掉。
+TEAM_FIELDS: Dict[str, str] = {
+    "visit_target_name": "被访人姓名（进校预约文案里的那位老师/同事）",
+    "visit_target_phone": "被访人电话（家长预约时要填的手机号）",
+}
+
 # 对外发文案前必须具备的字段（缺了就会在文案里留下 {{}}，或者答不上家长的问题）
 REQUIRED_FOR_COPY = [
     ("date", "活动日期"),

@@ -171,23 +171,6 @@ with st.expander("🔑 API 设置 · 第一次使用请先填这里", expanded=b
                     "② 接口地址是否带 /v1 或 /compatible-mode/v1 "
                     "③ 模型名是否和这个接口配套。")
 
-_team = knowledge.load_team_info()
-with st.expander("👥 团队信息（进校预约文案里的被访人）", expanded=False):
-    st.caption("这两项会直接写进「进校预约提醒」那份文案，是业务信息，不是 API 配置。"
-               "存在 activities.json 顶层，换期不会被替换掉。")
-    _t1, _t2 = st.columns([1, 1])
-    _team_name = _t1.text_input("被访人姓名", value=_team["visit_target_name"],
-                                key="team_name",
-                                help="进校预约批准的那位老师/同事的名字")
-    _team_phone = _t2.text_input("被访人电话", value=_team["visit_target_phone"],
-                                 key="team_phone",
-                                 help="家长预约时要填的被访人手机号")
-    if st.button("保存团队信息", key="team_save"):
-        knowledge.save_team_info(_team_name, _team_phone)
-        st.session_state["cfg_flash"] = "团队信息已保存（写进 activities.json，换期不会丢）。"
-        st.rerun()
-
-
 if _err and not config.API_KEY:
     st.stop()
 

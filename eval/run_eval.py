@@ -51,6 +51,13 @@ if "--keep-data" not in sys.argv:
     shutil.copytree(PROJ / "data", TMP_DATA, ignore=shutil.ignore_patterns("backups"))
     shutil.copy2(_SRC, TMP_KB)                      # _SRC = fixture（或回退到真实数据）
     shutil.copy2(TMP_KB, TMP_DATA / "activities.json")
+    # 推文原文也必须冻结！只冻结 activities.json 是不够的：题库是第十六期，
+    # 而 articles/current.md 会随真实业务换期。曾经因此出现「第十六期字段 +
+    # 第十八期推文」的混合上下文，模型读到最后一行「审核丨付广」，
+    # 就编出「付广老师带队」——被访人被当成了带队老师（Q27 就是这么红的）。
+    _ART = EVAL_DIR / "fixtures" / "article.md"
+    if _ART.exists():
+        shutil.copy2(_ART, TMP_DATA / "articles" / "current.md")
     config.DATA_DIR = TMP_DATA
     config.DATA_FILE = TMP_KB
     store.DATA_DIR = TMP_DATA
