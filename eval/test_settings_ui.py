@@ -137,9 +137,9 @@ def main() -> int:
         chatlog.LOG_DIR = TMP_DATA / "logs"
         chatlog.LOG_FILE = chatlog.LOG_DIR / "chat.jsonl"
 
-        check("界面上有「使用记录」面板（认它的说明文字）",
-              "永久保留" in texts(at) and "手机号已打码" in texts(at), texts(at)[:120])
-        at.text_input(key="operator_name").set_value("测试客服")
+        check("界面上没有「使用记录」面板（记录只落文件）",
+              "使用记录" not in texts(at), "界面上仍有使用记录相关文字")
+        config.CHAT_LOG_OPERATOR = "测试客服"      # 现在从 .env 读，测试里直接给
         at.chat_input[0].set_value("集合地点在哪").run()
         rows = chatlog.tail(10)
         check("问一句之后日志里有 1 条", len(rows) == 1, f"实际 {len(rows)} 条")
@@ -153,6 +153,22 @@ def main() -> int:
                   str(r0.get("trace")))
         check("真实日志目录没被写", not (PROJ / "data" / "logs" / "chat.jsonl").exists()
               or "集合地点在哪" not in (PROJ / "data" / "logs" / "chat.jsonl").read_text(encoding="utf-8"))
+
+        # ---- ⑥ 全量保存 + 回答不截断（数据层，界面不显示记录）----
+        for i in range(24):
+            chatlog.append(f"历史问题{i:02d}", {"answer": f"历史回答{i:02d}",
+                                             "trace": ["<context>"],
+                                             "usage": {"total_tokens": 100}})
+        long_tail = "【这一句在回答的最后，必须还能看到】"
+        long_answer = "集合点在海南大学海洋生物标本馆。" * 12 + long_tail
+        chatlog.append("长回答测试", {"answer": long_answer, "trace": ["<context>"],
+                                     "usage": {"total_tokens": 4200}})
+        rows2 = chatlog.all_rows()
+        check("all_rows 返回全部 26 条（不限条数）", len(rows2) == 26, f"实际 {len(rows2)}")
+        check("最早那条也在（证明不是只留 20 轮）",
+              any(r.get("q") == "历史问题00" for r in rows2))
+        check("长回答完整保存，末尾标记在（证明没截断到 40 字）",
+              (rows2[0].get("a") or "").endswith(long_tail), (rows2[0].get("a") or "")[-25:])
     finally:
         # 无论上面怎么挂，都把 .env 还原，绝不留一个坏模型名给客服
         shutil.copy2(BAK, ENV)

@@ -37,6 +37,10 @@ DATA_FILE = Path(os.getenv("ACTIVITIES_FILE", DATA_DIR / "activities.json"))
 VISIT_TARGET_NAME = os.getenv("VISIT_TARGET_NAME", "").strip()
 VISIT_TARGET_PHONE = os.getenv("VISIT_TARGET_PHONE", "").strip()
 
+# 使用记录里记成谁。本地模式下一个人一台电脑，所以在 .env 里写死最省事，
+# 不需要在界面上多一个输入框（用户明确要求：记录不要放在面板里）。
+CHAT_LOG_OPERATOR = os.getenv("CHAT_LOG_OPERATOR", "").strip()
+
 # ---- 运行参数 ----
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
 MAX_TOOL_ROUNDS = int(os.getenv("MAX_TOOL_ROUNDS", "6"))
@@ -85,6 +89,7 @@ def reload() -> None:
     只改文件不重读的话，界面显示「已保存」但程序still 用旧值（这个坑很隐蔽）。
     """
     global API_KEY, BASE_URL, MODEL, VISIT_TARGET_NAME, VISIT_TARGET_PHONE
+    global CHAT_LOG_OPERATOR
     global TEMPERATURE, MAX_TOOL_ROUNDS
     load_dotenv(ENV_PATH, override=True)
     API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
@@ -92,6 +97,7 @@ def reload() -> None:
     MODEL = os.getenv("MODEL_NAME", "deepseek-chat").strip()
     VISIT_TARGET_NAME = os.getenv("VISIT_TARGET_NAME", "").strip()
     VISIT_TARGET_PHONE = os.getenv("VISIT_TARGET_PHONE", "").strip()
+    CHAT_LOG_OPERATOR = os.getenv("CHAT_LOG_OPERATOR", "").strip()
     TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
     MAX_TOOL_ROUNDS = int(os.getenv("MAX_TOOL_ROUNDS", "6"))
 

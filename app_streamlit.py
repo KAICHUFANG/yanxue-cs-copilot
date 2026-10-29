@@ -171,34 +171,6 @@ with st.expander("👥 团队信息（进校预约文案里的被访人）", exp
         st.rerun()
 
 
-with st.expander("📜 使用记录（客服问了什么、系统答了什么）", expanded=False):
-    _st = chatlog.stats()
-    st.caption(f"共 {_st['turns']} 轮　累计 {_st['tokens']:,} tokens"
-               + (f"　最早 {_st['first']}　最近 {_st['last']}" if _st["turns"] else "")
-               + f"　｜　文件：{chatlog.path().relative_to(config.DATA_DIR.parent)}"
-               + "　｜　永久保留（不自动清理），手机号已打码")
-
-    st.text_input("你的名字（记进日志，区分谁问的）", value="", key="operator_name",
-                  placeholder="例如 小陈",
-                  help="填一次就行。日志里会记成「操作者」，多人共用时靠它区分。")
-    st.session_state["operator"] = st.session_state.get("operator_name", "").strip()
-
-    _rows = chatlog.tail(20)
-    if _rows:
-        st.dataframe(
-            [{"时间": r.get("ts", ""), "操作者": r.get("operator", ""),
-              "问": (r.get("q") or "")[:40],
-              "答（前 40 字）": (r.get("a") or "")[:40],
-              "走的路": r.get("trace", ""),
-              "tokens": r.get("tokens", 0)} for r in _rows],
-            hide_index=True, height=min(36 * len(_rows) + 40, 320))
-        st.download_button("下载完整记录（JSONL）", data=chatlog.read_all_bytes(),
-                           file_name="chat_log.jsonl", mime="application/x-ndjson",
-                           key="log_download")
-    else:
-        st.caption("还没有记录。这里会记下每一次问答，用来复盘「当时到底回了什么」。")
-
-
 if _err and not config.API_KEY:
     st.stop()
 
@@ -278,8 +250,7 @@ with right:
         _copy = agent.render_copy("")
         st.session_state.copy_text = _copy
         chatlog.append("（点了「生成全部群文案」）",
-                       {"answer": _copy, "trace": ["button: 生成全部群文案"]},
-                       operator=st.session_state.get("operator", ""))
+                       {"answer": _copy, "trace": ["button: 生成全部群文案"]})
 
     if st.session_state.copy_text:
         st.caption("点右上角图标复制")
@@ -395,7 +366,7 @@ if prompt:
                         for n in notes:
                             st.markdown(f"· {n}")
 
-    chatlog.append(prompt, r, operator=st.session_state.get("operator", ""))
+    chatlog.append(prompt, r)
     st.session_state.tokens += r.get("usage", {}).get("total_tokens", 0)
     st.session_state.msgs.append({
         "role": "assistant",

@@ -40,7 +40,8 @@ def path() -> Path:
     return LOG_FILE
 
 
-def append(question: str, result: Dict[str, Any], operator: str = "") -> None:
+def append(question: str, result: Dict[str, Any],
+           operator: Optional[str] = None) -> None:
     """记一轮对话。
 
     result 直接用 answer_chat / render_copy 的返回值，所以 trace（走了哪条路）、
@@ -48,9 +49,11 @@ def append(question: str, result: Dict[str, Any], operator: str = "") -> None:
     """
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
+        op = (operator if operator is not None
+              else getattr(config, "CHAT_LOG_OPERATOR", "")).strip()
         item = {
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "operator": (operator or "").strip() or "未署名",
+            "operator": op or "未署名",
             "q": _mask(str(result.get("question") or question or "")),
             "a": _mask(str(result.get("answer") or "")),
             "trace": " → ".join(str(t) for t in (result.get("trace") or [])),
@@ -80,8 +83,18 @@ def _read_all() -> List[Dict[str, Any]]:
     return out
 
 
+def all_rows() -> List[Dict[str, Any]]:
+    """全部记录，最近的在前。
+
+    界面默认显示全部，不做条数上限——这是用户明确要求的：
+    「全部保留，不要只保留 20 轮」。数据本来就是全量存的，
+    之前只是展示层砍成了 20 条 + 回答前 40 字，等于白存。
+    """
+    return _read_all()[::-1]
+
+
 def tail(n: int = 20) -> List[Dict[str, Any]]:
-    """最近 n 条（给界面展示用）。"""
+    """最近 n 条（脚本里临时看看用；界面不用它）。"""
     return _read_all()[-n:][::-1]
 
 
