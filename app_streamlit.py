@@ -98,8 +98,69 @@ def _startup_check() -> str:
 
 
 _err = _startup_check()
-if _err:
-    st.error(_err)
+
+# 一次性提示（flash）：保存成功之后要 st.rerun() 刷新界面，
+# 而 rerun 会把这一轮画的东西全部冲掉——不存进 session_state，用户就看不到任何反馈。
+_flash = st.session_state.pop("cfg_flash", "")
+if _flash:
+    st.success(_flash)
+
+
+with st.expander("🔑 API 设置 · 第一次使用请先填这里", expanded=bool(_err)):
+    if _err:
+        st.error(_err)
+    st.caption("这些值只保存在本机 `.env` 文件里，不会上传、不会进 git。"
+               "换 Key / 换模型就再来这里改一次，改完点下面的按钮。")
+
+    st.markdown(
+        f"当前：Key `{config.mask(config.API_KEY) if config.API_KEY else '（未填）'}`"
+        f"　·　接口 `{config.BASE_URL}`　·　模型 `{config.MODEL}`"
+        f"　·　被访人 `{config.VISIT_TARGET_NAME or '（未填）'}`"
+    )
+
+    _c1, _c2 = st.columns([1.7, 1])
+    _key_in = _c1.text_input(
+        "API Key", value="", type="password", key="cfg_key",
+        placeholder="粘贴你自己的 Key（留空 = 不修改现有 Key）",
+        help="DeepSeek 开放平台 → API keys → 创建。只显示一次，记得当场粘贴。")
+    _base_in = _c2.text_input("接口地址", value=config.BASE_URL, key="cfg_base",
+                              help="换别家时填它的 OpenAI 兼容地址，例如带 /compatible-mode/v1")
+
+    _c3, _c4, _c5 = st.columns([1.2, 1, 1])
+    _model_in = _c3.text_input("模型名", value=config.MODEL, key="cfg_model",
+                               help="要和接口配套：用了百炼的地址就不能写 deepseek-chat")
+    _name_in = _c4.text_input("被访人姓名", value=config.VISIT_TARGET_NAME, key="cfg_name",
+                              help="进校预约提醒文案里的「被访人」，必填才能生成那份文案")
+    _phone_in = _c5.text_input("被访人电话", value=config.VISIT_TARGET_PHONE, key="cfg_phone")
+
+    if st.button("保存并测试连接", type="primary", key="cfg_save"):
+        _updates = {
+            "DEEPSEEK_BASE_URL": _base_in.strip() or config.BASE_URL,
+            "MODEL_NAME": _model_in.strip() or config.MODEL,
+            "VISIT_TARGET_NAME": _name_in.strip(),
+            "VISIT_TARGET_PHONE": _phone_in.strip(),
+        }
+        if _key_in.strip():                      # 留空就不覆盖已有 Key
+            _updates["DEEPSEEK_API_KEY"] = _key_in.strip()
+
+        config.save_env(_updates)
+        config.reload()                          # 重读 .env，否则模块常量还是旧值
+        agent.reset_client()                     # 客户端创建时就把 Key 定死了，必须重建
+        _startup_check.clear()
+
+        _ok, _info = agent.ping_model()           # 真发一次请求，否则错误留给客服
+        if _ok:
+            # 存成 flash 再 rerun，否则这句提示会被整页重跑冲掉（测试抓到的）
+            st.session_state["cfg_flash"] = (
+                f"已保存到 .env，连接正常（模型回：{_info}）。可以正常使用了。")
+            st.rerun()
+        else:
+            st.error(f"已保存，但连不上：{_info}")
+            st.info("按顺序查三样：① Key 是否复制完整（没带空格）"
+                    "② 接口地址是否带 /v1 或 /compatible-mode/v1 "
+                    "③ 模型名是否和这个接口配套。")
+
+if _err and not config.API_KEY:
     st.stop()
 
 

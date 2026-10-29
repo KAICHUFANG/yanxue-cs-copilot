@@ -21,7 +21,7 @@ Agent：一句话进来 → 判断是「补充信息 / 要文案 / 提问」→ 
 
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from openai import OpenAI
 
@@ -31,6 +31,36 @@ import renderer
 import store
 
 _client = OpenAI(api_key=config.API_KEY, base_url=config.BASE_URL)
+
+
+def reset_client() -> None:
+    """重建模型客户端。
+
+    为什么需要：_client 是模块级对象，创建时就把 api_key / base_url 定死了。
+    在界面上换了 Key 之后如果不重建，请求还是打到旧 Key 上（表现为「明明改了还是 401」）。
+    """
+    global _client
+    _client = OpenAI(api_key=config.API_KEY, base_url=config.BASE_URL)
+
+
+def ping_model() -> Tuple[bool, str]:
+    """用一次最小请求验证 Key / 接口地址 / 模型名是否配套。
+
+    为什么要真调一次：Key 填错、base_url 少 /v1、模型名和接口不匹配，
+    这三种错误都只在真发请求时才暴露。存完不测，等于把错误留给客服。
+    """
+    try:
+        resp = _client.chat.completions.create(
+            model=config.MODEL,
+            messages=[{"role": "user", "content": "只回复两个字母：ok"}],
+            max_tokens=8,
+            temperature=0,
+        )
+        text = (resp.choices[0].message.content or "").strip()
+        return True, text or "（返回空内容，但连接正常）"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
 
 _EMPTY = (None, "", [], {})
 

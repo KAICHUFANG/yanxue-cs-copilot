@@ -1,7 +1,9 @@
 """集中管理配置。所有可变的东西都从 .env 读，代码里不出现密钥。"""
 
 import os
+import shutil
 from pathlib import Path
+from typing import Dict
 
 from dotenv import load_dotenv
 
@@ -38,6 +40,60 @@ VISIT_TARGET_PHONE = os.getenv("VISIT_TARGET_PHONE", "").strip()
 # ---- 运行参数 ----
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
 MAX_TOOL_ROUNDS = int(os.getenv("MAX_TOOL_ROUNDS", "6"))
+
+
+# ---------------------------------------------------------------- 界面里改配置
+# 为什么要在界面上改：新客服不是技术同学，让她去文本编辑器里改 .env
+# （还容易带全角空格、忘了保存）是把门槛放在最不该放的地方。
+# 所以提供一个「填 Key → 保存并测试」的入口，写回 .env 这一个来源。
+ENV_PATH = ROOT / ".env"
+
+
+def save_env(updates: Dict[str, str]) -> str:
+    """把若干项写回 .env，只改这几行，其余原样保留（写前备份 .env.bak）。
+
+    为什么写回 .env 而不是另存一个设置文件：
+        代码读的就是 .env（还有 .env.example 做模板）。
+        多一个存储位置，就多一处「界面里改了但程序读不到」的可能。
+    """
+    if ENV_PATH.exists():
+        shutil.copy2(ENV_PATH, ROOT / ".env.bak")   # .gitignore 已忽略 .env.*
+
+    lines = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
+    clean = {k: str(v).strip() for k, v in updates.items() if str(v).strip()}
+    seen = set()
+    out = []
+    for ln in lines:
+        key = ln.split("=", 1)[0].strip()
+        if key in clean:
+            out.append(f"{key}={clean[key]}")
+            seen.add(key)
+        else:
+            out.append(ln)
+    for k, v in clean.items():
+        if k not in seen:
+            out.append(f"{k}={v}")
+
+    ENV_PATH.write_text(chr(10).join(out) + chr(10), encoding="utf-8", newline=chr(10))
+    return str(ENV_PATH)
+
+
+def reload() -> None:
+    """重新从 .env 读进内存。
+
+    必须调：模块级的 API_KEY / MODEL 是启动时读的一次快照，
+    只改文件不重读的话，界面显示「已保存」但程序still 用旧值（这个坑很隐蔽）。
+    """
+    global API_KEY, BASE_URL, MODEL, VISIT_TARGET_NAME, VISIT_TARGET_PHONE
+    global TEMPERATURE, MAX_TOOL_ROUNDS
+    load_dotenv(ENV_PATH, override=True)
+    API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
+    MODEL = os.getenv("MODEL_NAME", "deepseek-chat").strip()
+    VISIT_TARGET_NAME = os.getenv("VISIT_TARGET_NAME", "").strip()
+    VISIT_TARGET_PHONE = os.getenv("VISIT_TARGET_PHONE", "").strip()
+    TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
+    MAX_TOOL_ROUNDS = int(os.getenv("MAX_TOOL_ROUNDS", "6"))
 
 
 def mask(key: str) -> str:
