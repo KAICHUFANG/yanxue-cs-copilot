@@ -109,7 +109,9 @@ __THEME_FALLBACK__
 #     （这就是「明亮模式下侧栏有一块不变白」的原因）。
 # 所以注入一小段 JS：直接量页面真实背景色，写进 CSS 变量，并监听主题切换。
 # 组件 iframe 与主页面同源，可以访问 parent.document；万一被拦，CSS 里的默认值兜底。
-THEME_SYNC_HTML = """
+# 注意这里是 raw string（r"""）：里面有 JS 正则 \( \s \d，
+# 不用 r 前缀 Python 会报 SyntaxWarning: invalid escape sequence。
+THEME_SYNC_HTML = r"""
 <script>
 (function () {
   function paint() {
@@ -170,7 +172,13 @@ if _flash:
 
 with st.expander("🔑 API 设置 · 第一次使用请先填这里", expanded=bool(_err)):
     if _err:
-        st.error(_err)
+        # 首行用红色报错，剩下的用代码块：
+        # st.error 走的是 Markdown，Windows 路径里的反斜杠会被当转义符吃掉
+        # （实测「...\客服工作台\.env」显示成「...\客服工作台.env」）。
+        _lines = _err.splitlines()
+        st.error(_lines[0] if _lines else _err)
+        if len(_lines) > 1:
+            st.code(chr(10).join(_lines[1:]), language=None)
     st.caption("这些值只保存在本机 `.env` 文件里，不会上传、不会进 git。"
                "换 Key / 换模型就再来这里改一次，改完点下面的按钮。")
 

@@ -1,3 +1,4 @@
-openai>=1.40.0
-python-dotenv>=1.0.1
-streamlit>=1.36
+# 钉主版本：openai 3.x 改过构造时的凭证校验行为，跳大版本会静默改变启动行为
+openai>=3.41,<4
+python-dotenv>=1.2,<2
+streamlit>=1.66,<2

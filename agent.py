@@ -30,7 +30,19 @@ import knowledge
 import renderer
 import store
 
-_client = OpenAI(api_key=config.API_KEY, base_url=config.BASE_URL)
+def _new_client() -> OpenAI:
+    """建模型客户端。
+
+    为什么要给 api_key 一个占位串：openai 3.x 在**构造时**就校验凭证，
+    `OpenAI(api_key="")` 会直接抛 OpenAIError: Missing credentials。
+    而本模块是在 import 时就建客户端的 —— 结果就是「新机器上还没填 Key 时，
+    Streamlit 界面还没画出来就崩了」，我们那个引导填 Key 的面板根本轮不到显示。
+    给个占位串让它先建成功；真正没 Key 时 config.check() 会拦住并给出引导。
+    """
+    return OpenAI(api_key=config.API_KEY or "not-set-yet", base_url=config.BASE_URL)
+
+
+_client = _new_client()
 
 
 def reset_client() -> None:
@@ -40,7 +52,7 @@ def reset_client() -> None:
     在界面上换了 Key 之后如果不重建，请求还是打到旧 Key 上（表现为「明明改了还是 401」）。
     """
     global _client
-    _client = OpenAI(api_key=config.API_KEY, base_url=config.BASE_URL)
+    _client = _new_client()
 
 
 def ping_model() -> Tuple[bool, str]:

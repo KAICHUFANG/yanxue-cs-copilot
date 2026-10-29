@@ -136,9 +136,13 @@ def main() -> int:
 
         # ---- ⑤ 使用记录：问一句就应该落一行日志 ----
         import chatlog
-        # 日志也要指到副本，否则测试的假问句会混进客服真实记录
+        # 日志也要指到副本，否则测试的假问句会混进客服真实记录。
+        # 另外必须先清空副本里的日志：data/logs 已经有真实使用记录，
+        # 跟着 copytree 一起复制过来，断言「恰好 1 条」就会不成立（踩过）。
         chatlog.LOG_DIR = TMP_DATA / "logs"
         chatlog.LOG_FILE = chatlog.LOG_DIR / "chat.jsonl"
+        if chatlog.LOG_FILE.exists():
+            chatlog.LOG_FILE.unlink()
 
         check("界面上没有「使用记录」面板（记录只落文件）",
               "使用记录" not in texts(at), "界面上仍有使用记录相关文字")
