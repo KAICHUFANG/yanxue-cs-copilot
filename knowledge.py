@@ -49,6 +49,34 @@ def load_activities() -> Dict[str, Any]:
     return kb
 
 
+def load_team_info() -> Dict[str, Any]:
+    """团队级信息（被访人姓名/电话）。放在 activities.json 顶层，换期不丢。
+
+    为什么不做成 config 常量：它不是部署参数，是业务信息。
+    放在 .env 里的直接后果就是「界面里被塞进了 API 设置那一栏」——
+    按存放位置分组，就会把不相关的东西凑到一起。
+    """
+    kb = _load_json(config.DATA_FILE)
+    info = kb.get("team_info") or {}
+    # 老版本把它放在 .env，读不到时兜底回去，免得已部署的机器突然失效
+    name = str(info.get("visit_target_name") or "").strip() or config.VISIT_TARGET_NAME
+    phone = str(info.get("visit_target_phone") or "").strip() or config.VISIT_TARGET_PHONE
+    return {"visit_target_name": name, "visit_target_phone": phone}
+
+
+def save_team_info(name: str, phone: str) -> None:
+    """写回 activities.json 顶层（只动 team_info，其余原样）。"""
+    kb = _load_json(config.DATA_FILE)
+    info = dict(kb.get("team_info") or {})
+    if name.strip():
+        info["visit_target_name"] = name.strip()
+    if phone.strip():
+        info["visit_target_phone"] = phone.strip()
+    kb["team_info"] = info
+    with open(config.DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(kb, f, ensure_ascii=False, indent=2)
+
+
 def load_processes() -> Dict[str, Any]:
     return _load_json(config.DATA_DIR / "processes.json")
 
@@ -83,7 +111,8 @@ def load_article(activity: Optional[Dict[str, Any]] = None) -> str:
 # 这些键是给程序/审计看的，不该塞进模型上下文：
 #   _ 开头的是内部溯源字段（_status_basis、_meeting_point_note…）
 #   下面几个是写给我自己看的判断依据，模型读了反而会照着「讲道理」
-_HIDDEN_KEYS = {"source", "why", "common_mistake", "schema_version", "applies_to", "output_mode_note"}
+_HIDDEN_KEYS = {"source", "why", "common_mistake", "schema_version", "applies_to",
+                "output_mode_note", "applies_when_empty"}
 
 
 def _strip(obj: Any) -> Any:
@@ -313,6 +342,28 @@ def review_url(text: str) -> str:
     return urls[0] if urls else ""
 
 
+def _drop_inapplicable(policies: dict, act: dict) -> dict:
+    """丢掉「只在某个字段为空时才成立」的规则。
+
+    真实踩过的坑（用户报的）：
+        库里集合点已经填成「海南大学海洋生物标本馆」，
+        但 meeting_point_policy 那句「集合点每期不同，确定了再发」照样进了上下文，
+        模型照抄，于是答出「地点在海洋生物标本馆。集合点每期不一样，定了我发您」——
+        一句话里自相矛盾，家长直接蒙。
+
+    根因不是模型笨，是**我们给它看了一条当下已经不成立的规定**。
+    所以规则本身要带条件：在数据里写 applies_when_empty: meeting_point，
+    该字段一旦有值，这条就不进上下文。
+    """
+    out = {}
+    for k, v in (policies or {}).items():
+        guard = v.get("applies_when_empty") if isinstance(v, dict) else None
+        if guard and act.get(guard) not in (None, "", [], {}):
+            continue
+        out[k] = v
+    return out
+
+
 def build_context(activity_id: Optional[str] = None, question: str = "") -> str:
     """拼出「当前活动 + 通用规则 + 流程 + 文案模板」的完整上下文。
 
@@ -382,7 +433,10 @@ def build_context(activity_id: Optional[str] = None, question: str = "") -> str:
                 parts.append(f"【往期（{lab}）的活动回顾推文原文】\n{text}")
                 break            # 一次只带一期，别把窗口撑爆
 
-    parts.append("【跨期通用规则】\n" + json.dumps(_strip(kb.get("policies", {})), ensure_ascii=False, indent=1))
+    # 顺序很重要：先按条件过滤（要用 applies_when_empty 这个开关），再 strip 掉内部字段。
+    # 反过来写的话，_strip 会先把开关删了，过滤器就永远判不出该不该丢（这个顺序错过一次）。
+    _policies = _strip(_drop_inapplicable(kb.get("policies", {}), act or {}))
+    parts.append("【跨期通用规则】\n" + json.dumps(_policies, ensure_ascii=False, indent=1))
     parts.append("【品牌信息】\n" + json.dumps(_strip(kb.get("brand", {})), ensure_ascii=False, indent=1))
     parts.append("【流程与定稿文案】\n" + json.dumps(_strip(load_processes()), ensure_ascii=False, indent=1))
     parts.append("【活动群文案模板】\n" + json.dumps(_strip(load_group_messages()), ensure_ascii=False, indent=1))

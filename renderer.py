@@ -166,10 +166,11 @@ def _load_processes() -> Dict[str, Any]:
 
 def _process_sources() -> Dict[str, Optional[str]]:
     """流程文案里的占位符。（None = 代码没有来源，必须人工填）"""
+    import knowledge
+    team = knowledge.load_team_info()      # 业务信息从数据里读，.env 只做兜底
     return {
-        # 被访人是团队自己的老师，属于固定信息，存在 .env（个人信息不进仓库）
-        "{{被访人姓名}}": config.VISIT_TARGET_NAME or None,
-        "{{被访人电话}}": config.VISIT_TARGET_PHONE or None,
+        "{{被访人姓名}}": team.get("visit_target_name") or None,
+        "{{被访人电话}}": team.get("visit_target_phone") or None,
         # 不能照抄默认值：建群晚的活动要改成「今天较晚时段」，否则来不及催审核
         "{{反馈时点}}": None,
     }

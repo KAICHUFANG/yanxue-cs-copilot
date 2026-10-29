@@ -430,6 +430,32 @@ def data_hygiene_tests() -> int:
     check("data/ 下不再有临时摘录 md",
           not list((TMP_DATA).glob("activities.raw.md"))
           and not list((TMP_DATA).glob("raw_S16*.md")))
+    # ⑨ 集合点已填时，那条「每期不同」的规则不许再进上下文
+    #    （用户报过的自相矛盾：地点在标本馆 → 又说集合点每期不一样、定了再发）
+    reset()
+    store.update_activity(None, {"meeting_point": "海南大学海洋生物标本馆",
+                                 "meeting_time": "15:00"})
+    ctx = knowledge.build_context()
+    check("集合点已填 → 上下文里没有「集合点每期不同」", "集合点每期不同" not in ctx)
+    check("集合点已填 → 上下文里有那个具体地点", "海南大学海洋生物标本馆" in ctx)
+    check("导航照片那条仍然保留（它确实还没拍）", "导航照片" in ctx)
+    check("条件开关 applies_when_empty 没漏进上下文", "applies_when_empty" not in ctx)
+
+    reset()
+    ctx2 = knowledge.build_context()
+    check("集合点清空后 → 那条规则要回来", "集合点每期不同" in ctx2)
+
+    # ⑩ 端到端：集合点已填，问「在哪集合」，答出来不许自相矛盾
+    reset()
+    store.update_activity(None, {"meeting_point": "海南大学海洋生物标本馆",
+                                 "meeting_time": "15:00"})
+    ans = agent.answer_ctx("集合地点在哪")["answer"]
+    bad_words = [w for w in ("每期不一样", "每期不同", "还没定", "没定", "定了我",
+                             "待定", "确定后再", "确定后我") if w in ans]
+    check("回答里没有「还没定」类矛盾说法", not bad_words, bad_words)
+    check("回答里有具体集合点", "标本馆" in ans, ans[:60])
+    reset()
+
     return bad
 
 

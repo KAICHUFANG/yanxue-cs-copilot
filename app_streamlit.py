@@ -115,7 +115,6 @@ with st.expander("🔑 API 设置 · 第一次使用请先填这里", expanded=b
     st.markdown(
         f"当前：Key `{config.mask(config.API_KEY) if config.API_KEY else '（未填）'}`"
         f"　·　接口 `{config.BASE_URL}`　·　模型 `{config.MODEL}`"
-        f"　·　被访人 `{config.VISIT_TARGET_NAME or '（未填）'}`"
     )
 
     _c1, _c2 = st.columns([1.7, 1])
@@ -126,19 +125,13 @@ with st.expander("🔑 API 设置 · 第一次使用请先填这里", expanded=b
     _base_in = _c2.text_input("接口地址", value=config.BASE_URL, key="cfg_base",
                               help="换别家时填它的 OpenAI 兼容地址，例如带 /compatible-mode/v1")
 
-    _c3, _c4, _c5 = st.columns([1.2, 1, 1])
-    _model_in = _c3.text_input("模型名", value=config.MODEL, key="cfg_model",
-                               help="要和接口配套：用了百炼的地址就不能写 deepseek-chat")
-    _name_in = _c4.text_input("被访人姓名", value=config.VISIT_TARGET_NAME, key="cfg_name",
-                              help="进校预约提醒文案里的「被访人」，必填才能生成那份文案")
-    _phone_in = _c5.text_input("被访人电话", value=config.VISIT_TARGET_PHONE, key="cfg_phone")
+    _model_in = st.text_input("模型名", value=config.MODEL, key="cfg_model",
+                              help="要和接口配套：用了百炼的地址就不能写 deepseek-chat")
 
     if st.button("保存并测试连接", type="primary", key="cfg_save"):
         _updates = {
             "DEEPSEEK_BASE_URL": _base_in.strip() or config.BASE_URL,
             "MODEL_NAME": _model_in.strip() or config.MODEL,
-            "VISIT_TARGET_NAME": _name_in.strip(),
-            "VISIT_TARGET_PHONE": _phone_in.strip(),
         }
         if _key_in.strip():                      # 留空就不覆盖已有 Key
             _updates["DEEPSEEK_API_KEY"] = _key_in.strip()
@@ -159,6 +152,23 @@ with st.expander("🔑 API 设置 · 第一次使用请先填这里", expanded=b
             st.info("按顺序查三样：① Key 是否复制完整（没带空格）"
                     "② 接口地址是否带 /v1 或 /compatible-mode/v1 "
                     "③ 模型名是否和这个接口配套。")
+
+_team = knowledge.load_team_info()
+with st.expander("👥 团队信息（进校预约文案里的被访人）", expanded=False):
+    st.caption("这两项会直接写进「进校预约提醒」那份文案，是业务信息，不是 API 配置。"
+               "存在 activities.json 顶层，换期不会被替换掉。")
+    _t1, _t2 = st.columns([1, 1])
+    _team_name = _t1.text_input("被访人姓名", value=_team["visit_target_name"],
+                                key="team_name",
+                                help="进校预约批准的那位老师/同事的名字")
+    _team_phone = _t2.text_input("被访人电话", value=_team["visit_target_phone"],
+                                 key="team_phone",
+                                 help="家长预约时要填的被访人手机号")
+    if st.button("保存团队信息", key="team_save"):
+        knowledge.save_team_info(_team_name, _team_phone)
+        st.session_state["cfg_flash"] = "团队信息已保存（写进 activities.json，换期不会丢）。"
+        st.rerun()
+
 
 if _err and not config.API_KEY:
     st.stop()

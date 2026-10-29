@@ -22,6 +22,7 @@ from pathlib import Path
 EVAL_DIR = Path(__file__).resolve().parent
 PROJ = EVAL_DIR.parent
 TMP_KB = EVAL_DIR / "tmp_activities.json"
+TMP_DATA = EVAL_DIR / "tmp_eval_data"
 
 # 评测固定用 eval/fixtures 里的题库快照，不直接吃真实业务数据——
 # 否则客服今天填一个集合地点，昨天的评测结论就作废（踩过）。
@@ -38,9 +39,22 @@ import agent        # noqa: E402
 import config       # noqa: E402
 import store        # noqa: E402
 
-# 只隔离 ACTIVITIES_FILE 是不够的：写库用例的备份会写进真实 data/backups。
-# 这里把备份目录也指到 eval/ 下，跑评测不再污染业务数据。
-store.BACKUP_DIR = EVAL_DIR / "backups"
+# 只隔离 ACTIVITIES_FILE 远远不够。真实踩过两次，第二次是把业务的
+# archive/superseded.jsonl 追加了一条「整条替换为 第九十九期」的测试垃圾：
+#   ① 写库用例的备份 → data/backups
+#   ② 整条替换的归档 → data/archive/superseded.jsonl
+# 所以直接把整个 data 目录复制一份，所有路径都指过去（和 write_tests 一致）。
+if "--keep-data" not in sys.argv:
+    # 数据目录复制一份（语料/推文/流程/归档都在里面），但**活动记录用冻结题库**：
+    # 评测必须可复现 —— 客服今天填个集合点，昨天的评测结论就作废（踩过）。
+    shutil.rmtree(TMP_DATA, ignore_errors=True)
+    shutil.copytree(PROJ / "data", TMP_DATA, ignore=shutil.ignore_patterns("backups"))
+    shutil.copy2(_SRC, TMP_KB)                      # _SRC = fixture（或回退到真实数据）
+    shutil.copy2(TMP_KB, TMP_DATA / "activities.json")
+    config.DATA_DIR = TMP_DATA
+    config.DATA_FILE = TMP_KB
+    store.DATA_DIR = TMP_DATA
+    store.BACKUP_DIR = TMP_DATA / "backups"
 
 
 def load_cases() -> list:

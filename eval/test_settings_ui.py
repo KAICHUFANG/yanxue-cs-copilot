@@ -7,19 +7,39 @@ AppTest 直接跑脚本、set 输入、click 按钮、读 st.success/st.error，
     .venv\\Scripts\\python.exe eval\\test_settings_ui.py
 """
 
+import json
+import os
 import shutil
 import sys
 from pathlib import Path
 
 PROJ = Path(__file__).resolve().parent.parent
+EVAL_DIR = Path(__file__).resolve().parent
+TMP_DATA = EVAL_DIR / "tmp_ui_data"
+
+# ⚠️ 必须先复制数据目录、把路径指过去，再 import config/store/knowledge。
+#    第一版没做这件事，测试里的「模拟换期」把真实的 activities.json 冲成了
+#    「第九十九期」（只剩 7 个字段），靠备份才恢复。
+#    教训：凡是会走写库路径的测试，隔离 DATA_DIR 一个都不能少。
+shutil.rmtree(TMP_DATA, ignore_errors=True)
+shutil.copytree(PROJ / "data", TMP_DATA, ignore=shutil.ignore_patterns("backups"))
+os.environ["ACTIVITIES_FILE"] = str(TMP_DATA / "activities.json")
+
 sys.path.insert(0, str(PROJ))
 
 from streamlit.testing.v1 import AppTest        # noqa: E402
 
 import config                                   # noqa: E402
+import store                                    # noqa: E402
+
+config.DATA_DIR = TMP_DATA
+config.DATA_FILE = TMP_DATA / "activities.json"
+store.DATA_DIR = TMP_DATA
+store.BACKUP_DIR = TMP_DATA / "backups"
 
 ENV = PROJ / ".env"
 BAK = PROJ / ".env.testbak"
+TMP_ACT = TMP_DATA / "activities.json"
 
 fails = 0
 
@@ -55,10 +75,14 @@ def main() -> int:
               str(at.exception[0].value) if at.exception else "")
         check("显示当前 Key 的打码值", config.mask(config.API_KEY)[:8] in body
               or "当前：Key" in body)
-        check("五个输入框都在", all(k in [w.key for w in at.text_input]
-                                for k in ("cfg_key", "cfg_base", "cfg_model",
-                                          "cfg_name", "cfg_phone")),
-              str([w.key for w in at.text_input]))
+        keys = [w.key for w in at.text_input]
+        check("API 面板只有三个字段（Key / 接口 / 模型）",
+              all(k in keys for k in ("cfg_key", "cfg_base", "cfg_model")),
+              str(keys))
+        check("被访人不在 API 面板里（它是业务信息，不是 API 配置）",
+              "cfg_name" not in keys and "cfg_phone" not in keys, str(keys))
+        check("团队信息是独立一栏", all(k in keys for k in ("team_name", "team_phone")),
+              str(keys))
 
         # ---- ② 不改 Key，只点「保存并测试连接」----
         at.button(key="cfg_save").click().run()
@@ -76,6 +100,27 @@ def main() -> int:
         check("报错里给了排查方向", "接口地址" in body or "/v1" in body, body[:200])
         check(".env 里确实写成了那个模型名",
               "no-such-model-xyz" in ENV.read_text(encoding="utf-8"))
+
+        # ---- ④ 团队信息：独立保存，且换期不丢 ----
+        import json
+        import store
+        at.text_input(key="team_name").set_value("测试老师")
+        at.text_input(key="team_phone").set_value("13800001111")
+        at.button(key="team_save").click().run()
+        check("保存团队信息不报错", not at.exception,
+              str(at.exception[0].value) if at.exception else "")
+        kb = json.loads(TMP_ACT.read_text(encoding="utf-8"))
+        check("团队信息存在 activities.json 顶层",
+              (kb.get("team_info") or {}).get("visit_target_name") == "测试老师")
+        check("团队信息没有被写进 .env",
+              "测试老师" not in ENV.read_text(encoding="utf-8"))
+        # 模拟换期：整条替换后 team_info 必须还在
+        store.update_activity(None, {"session_label": "第九十九期"}, replace=True)
+        kb2 = json.loads(TMP_ACT.read_text(encoding="utf-8"))
+        check("换期后团队信息还在（因为不在 activities[0] 里）",
+              (kb2.get("team_info") or {}).get("visit_target_name") == "测试老师")
+        check("换期后 activities[0] 里没有 team_info 副本",
+              "team_info" not in (kb2.get("activities") or [{}])[0])
     finally:
         # 无论上面怎么挂，都把 .env 还原，绝不留一个坏模型名给客服
         shutil.copy2(BAK, ENV)
