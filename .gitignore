@@ -29,3 +29,5 @@ eval/backups/
 .DS_Store
 Thumbs.db
 desktop.ini
+# ---- 使用记录（含家长问句，不进仓库）----
+data/logs/

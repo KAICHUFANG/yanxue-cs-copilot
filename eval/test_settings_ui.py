@@ -101,6 +101,15 @@ def main() -> int:
         check(".env 里确实写成了那个模型名",
               "no-such-model-xyz" in ENV.read_text(encoding="utf-8"))
 
+        # 立刻还原！不然后面那次真实问答会拿着坏模型名去请求，直接 404，
+        # 表现为「日志里 0 条」——排查了半天才发现是测试自己挖的坑。
+        shutil.copy2(BAK, ENV)
+        config.reload()
+        import agent as _agent
+        _agent.reset_client()
+        check("坏模型名验证完后已还原为可用模型", config.MODEL in ("deepseek-chat", "deepseek-flash"),
+              config.MODEL)
+
         # ---- ④ 团队信息：独立保存，且换期不丢 ----
         import json
         import store
@@ -121,6 +130,29 @@ def main() -> int:
               (kb2.get("team_info") or {}).get("visit_target_name") == "测试老师")
         check("换期后 activities[0] 里没有 team_info 副本",
               "team_info" not in (kb2.get("activities") or [{}])[0])
+
+        # ---- ⑤ 使用记录：问一句就应该落一行日志 ----
+        import chatlog
+        # 日志也要指到副本，否则测试的假问句会混进客服真实记录
+        chatlog.LOG_DIR = TMP_DATA / "logs"
+        chatlog.LOG_FILE = chatlog.LOG_DIR / "chat.jsonl"
+
+        check("界面上有「使用记录」面板（认它的说明文字）",
+              "永久保留" in texts(at) and "手机号已打码" in texts(at), texts(at)[:120])
+        at.text_input(key="operator_name").set_value("测试客服")
+        at.chat_input[0].set_value("集合地点在哪").run()
+        rows = chatlog.tail(10)
+        check("问一句之后日志里有 1 条", len(rows) == 1, f"实际 {len(rows)} 条")
+        if rows:
+            r0 = rows[0]
+            check("日志记下了问题原文", "集合地点在哪" in (r0.get("q") or ""), str(r0.get("q"))[:60])
+            check("日志记下了答案", bool(r0.get("a")))
+            check("日志记下了操作者", r0.get("operator") == "测试客服", r0.get("operator"))
+            check("日志记下了走的路和 tokens",
+                  bool(r0.get("trace")) and int(r0.get("tokens") or 0) > 0,
+                  str(r0.get("trace")))
+        check("真实日志目录没被写", not (PROJ / "data" / "logs" / "chat.jsonl").exists()
+              or "集合地点在哪" not in (PROJ / "data" / "logs" / "chat.jsonl").read_text(encoding="utf-8"))
     finally:
         # 无论上面怎么挂，都把 .env 还原，绝不留一个坏模型名给客服
         shutil.copy2(BAK, ENV)
