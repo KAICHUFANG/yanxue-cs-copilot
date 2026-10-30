@@ -134,6 +134,26 @@ def main() -> int:
         knowledge.save_team_info(before_team.get("visit_target_name", ""),
                                 before_team.get("visit_target_phone", ""))
 
+        # ---- ④b 「显示文案发布流程」按钮：只给流程，不给正文 ----
+        _flow_btn = [b for b in at.button if "发布流程" in (b.label or "")]
+        check("右边有「显示文案发布流程」按钮", bool(_flow_btn),
+              str([b.label for b in at.button]))
+        check("「生成全部群文案」按钮已移除",
+              not [b for b in at.button if "生成全部群文案" in (b.label or "")])
+        if _flow_btn:
+            _flow_btn[0].click().run()
+            body_flow = texts(at)
+        else:
+            body_flow = ""
+        check("流程里说明了时间线（活动前 2 天 / 前一天 / 当天）",
+              "活动前 2 天" in body_flow and "前一天" in body_flow, body_flow[:120])
+        check("流程里包含「流程之外」的定位与引导图",
+              "定位" in body_flow and "引导图" in body_flow)
+        check("提醒了「发定位时要跟家长说明引导图稍后补」",
+              "引导图" in body_flow and "说明" in body_flow)
+        check("流程里不含正文文案（不应出现群公告开头）",
+              "各位家长好，欢迎加入" not in body_flow, "流程里混进了正文")
+
         # ---- ⑤ 使用记录：问一句就应该落一行日志 ----
         import chatlog
         # 日志也要指到副本，否则测试的假问句会混进客服真实记录。

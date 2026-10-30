@@ -652,6 +652,11 @@ def _render_group(aid: Optional[str], key: Optional[str],
         return {"error": raw}
 
 
+def show_publish_flow() -> str:
+    """「显示文案发布流程」按钮用：只给流程清单，不生成任何正文文案。"""
+    return renderer.render_publish_flow(knowledge.current_activity_id() or "")
+
+
 def render_copy(stage_text: str, all_when_empty: bool = True) -> str:
     """按阶段渲染群文案。模板里的 {{占位符}} 由代码填，保证原文输出。
 

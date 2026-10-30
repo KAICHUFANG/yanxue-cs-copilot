@@ -403,3 +403,47 @@ def render_group_messages(
         },
         ensure_ascii=False,
     )
+
+
+def render_publish_flow(activity_id: str) -> str:
+    """生成「活动群文案发布流程」清单（只讲流程，不生成任何正文文案）。
+
+    为什么单独一个函数、而不是复用 render_group_messages：
+        这两件事的输出物完全不同 ——
+          渲染文案：给客服可以直接复制发出去的原话；
+          发布流程：给客服一份「什么时候发什么、哪里容易漏」的清单。
+        混在一起就会变成「一键吐出五段文案 + 一堆提示」，客服反而不知道先发哪个。
+    """
+    activity = load_activity(activity_id)
+    book = json.loads((config.DATA_DIR / "group_messages.json").read_text(encoding="utf-8"))
+    flow = book.get("publish_flow") or {}
+    if not flow:
+        return "（流程数据缺失：group_messages.json 里没有 publish_flow）"
+
+    label = (activity or {}).get("session_label") or "本期"
+    title = (activity or {}).get("title") or ""
+    lines = [f"📋 活动群文案发布流程 · {label}" + (f"「{title}」" if title else ""), ""]
+    lines.append("按顺序来。每一步只在这里看「发什么」，具体文案在对话框里要（例如「写个欢迎语」）。")
+    lines.append("")
+
+    for st in flow.get("main_steps") or []:
+        lines.append(f"{st['seq']}️⃣ {st['when']} · {st['title']}")
+        lines.append(f"    发什么：{st['what']}")
+        if st.get("caveat"):
+            lines.append(f"    ⚠️ {st['caveat']}")
+        lines.append("")
+
+    sides = flow.get("side_notes") or []
+    if sides:
+        lines.append("————")
+        lines.append("⏱ 流程之外（不受上面的时间线限制）")
+        lines.append("")
+        for i, sn in enumerate(sides, 1):
+            lines.append(f"{i}. {sn['title']}｜{sn['when']}")
+            lines.append(f"   {sn['text']}")
+            lines.append("")
+
+    lines.append("————")
+    lines.append("记不住就先看这一句：欢迎 → 预约 → 前一天提醒 → 当天出发 → 结束感谢 → 回顾推广；"
+                 "定位随时发，引导图活动开始前发。")
+    return chr(10).join(lines).rstrip() + chr(10)

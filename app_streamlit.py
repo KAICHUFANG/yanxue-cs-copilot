@@ -232,8 +232,8 @@ if "msgs" not in st.session_state:
     st.session_state.msgs = []          # [{role, content, wrote, errors, notes}]
 if "tokens" not in st.session_state:
     st.session_state.tokens = 0
-if "copy_text" not in st.session_state:
-    st.session_state.copy_text = ""
+if "flow_text" not in st.session_state:
+    st.session_state.flow_text = ""      # 「文案发布流程」清单（只讲流程，不含正文）
 
 act = knowledge.get_activity() or {}
 missing = store.missing_fields(act)
@@ -297,16 +297,15 @@ with right:
         st.dataframe(rows2, hide_index=True, height=300)
 
     st.divider()
-    if st.button("生成全部群文案", width="stretch",
-                 help="5 个阶段一起生成，走代码填模板，不会改写原文"):
-        _copy = agent.render_copy("")
-        st.session_state.copy_text = _copy
-        chatlog.append("（点了「生成全部群文案」）",
-                       {"answer": _copy, "trace": ["button: 生成全部群文案"]})
+    if st.button("📋 显示文案发布流程", width="stretch",
+                 help="只列「什么时候发什么、哪里容易漏」，不生成正文；要具体文案在左边对话框要"):
+        st.session_state.flow_text = agent.show_publish_flow()
+        chatlog.append("（点了「显示文案发布流程」）",
+                       {"answer": st.session_state.flow_text,
+                        "trace": ["button: 文案发布流程"]})
 
-    if st.session_state.copy_text:
-        st.caption("点右上角图标复制")
-        st.code(st.session_state.copy_text, language=None)
+    if st.session_state.flow_text:
+        st.markdown(st.session_state.flow_text)
 
 
 with left:
