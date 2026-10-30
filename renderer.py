@@ -52,7 +52,19 @@ _MANUAL_REASON["{{反馈时点}}"] = (
 )
 
 
+# 流程类占位符的「怎么补」说明。原先是统一一句「代码里没有这项数据来源」——
+# 对客服等于没说，她还得到处问「去哪填」。这里写清楚填在哪儿、怎么填。
+_PROCESS_FIX_HINT = {
+    "{{被访人姓名}}": "进校预约文案要用。在 .env 里填 VISIT_TARGET_NAME，"
+                      "或直接跟我说「被访人姓名是 xxx」",
+    "{{被访人电话}}": "进校预约文案要用。在 .env 里填 VISIT_TARGET_PHONE，"
+                      "或直接跟我说「被访人电话是 xxx」",
+}
+
+
 def _reason_for(token: str) -> str:
+    if token in _PROCESS_FIX_HINT:
+        return _PROCESS_FIX_HINT[token]
     for prefix, reason in _MANUAL_REASON.items():
         if token.startswith(prefix):
             return reason
