@@ -431,6 +431,30 @@ def data_hygiene_tests() -> int:
     check("生成的群文案原文.md 收录了全部模板", len(in_gen) == len(texts),
           f"{len(in_gen)}/{len(texts)}")
 
+    # ⑨ 阶段关键词映射（纯代码，用户报过「预约进校文案」被渲染成欢迎语）
+    checks = {
+        "写个拉群欢迎语": "①", "生成预约进校文案": "②", "进校预约提醒": "②",
+        "写个活动前一天的活动提醒": "③", "写个当天的出发提醒": "④",
+        "出发提醒": "④", "写个活动结束感谢": "⑤", "回顾分享": "⑤",
+    }
+    bad_stage = []
+    for text, want in checks.items():
+        got = None
+        for word, no, _tg in agent._STAGE_HINT:
+            if word in text:
+                got = no
+                break
+        if got != want:
+            bad_stage.append(f"{text}→{got}(应{want})")
+    check("阶段关键词映射全对（具体的词优先于笼统的词）", not bad_stage, bad_stage)
+
+    # ⑩ title 清洗：推文标题「“公众号名”第十八期丨活动名」不能整串当活动名
+    check("title 切掉「…丨」前的公众号名与期次",
+          store.clean_title("“山海科普研学”第十八期丨“海大蓝境”海洋生物标本馆")
+          == "“海大蓝境”海洋生物标本馆")
+    check("title 正常时不动它",
+          store.clean_title("自贸港小商人·集市大冒险") == "自贸港小商人·集市大冒险")
+
     # ⑧ 两份临时摘录已清掉
     check("data/ 下不再有临时摘录 md",
           not list((TMP_DATA).glob("activities.raw.md"))

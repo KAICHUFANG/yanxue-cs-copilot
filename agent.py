@@ -263,6 +263,10 @@ C. question —— 在问问题
   让程序去反问客服，不要替她猜
 · 拿不准的时候选 question（宁可多问一句，也不要乱写库）
 · 只抽客服**明确说过**的字段，没说的一律不要填，不要编「校门口」「上午」这种默认值
+
+**title 只填活动名本身**：推文标题常写成「“公众号名”第十八期丨“活动名”」，
+title 要的是「丨」后面那一段（例如「“海大蓝境”海洋生物标本馆」），
+不要把公众号名、期次、分隔符带上。（代码也会再切一次，但你这里就别填错。）
 · 客服只报了字段名、没给内容（「集合地点」「名额」）→ 不要当成 update，
   按 question 处理，并反问她要填什么
 
@@ -303,7 +307,7 @@ __FIELDS__
   capacity 就不要填，让它空着（空着界面会提示客服去确认，填错了没人发现）
 
 只输出 JSON：
-{"kind": "update" | "copy" | "question", "is_article": true | false, "is_new_activity": true | false, "article_kind": "promo" | "review" | "", "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语/活动提醒/出发提醒/结束感谢；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
+{"kind": "update" | "copy" | "question", "is_article": true | false, "is_new_activity": true | false, "article_kind": "promo" | "review" | "", "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语/进校预约提醒/活动提醒/出发提醒/结束感谢；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
 
 promo_channel 怎么填：
 · 提到「朋友圈」「盆友圈」「pyq」「圈里」「动态」→ moments
@@ -313,16 +317,19 @@ promo_channel 怎么填：
 
 # 文案阶段 → group_messages.json 里 timeline 的圈号。
 # 渲染器的 stage 参数是按「圈号是不是子串」筛选的，所以这里只给圈号。
+# 阶段关键词 → 圈号。**顺序很重要**：具体的说法必须排在笼统的之前，
+# 因为匹配是「第一个命中的算」：
+#   「写个当天的出发提醒」同时含「提醒」和「出发」，
+#   若「提醒」排在前，就会被当成 ③ 活动提醒（实测真错过）。
 _STAGE_HINT = [
     ("欢迎", "①", None), ("拉群", "①", None), ("建群", "①", None),
     ("预约", "②", None), ("进校", "②", None),
-    ("提醒", "③", None), ("前一天", "③", None),
-    ("出发", "④", None), ("当天", "④", None),
-    # ⑤ 里有两种不同用途的文案，靠 tag 分开：
-    #   结束感谢（thanks）当天晚上发；回顾分享（review）等推文发完 1-2 天才发。
-    # 「回顾」放在前面先匹配，否则「回顾推文」会被当成「结束」把两段都吐出来。
+    # ④ 和 ⑤ 的具体说法先匹配
+    ("出发", "④", None), ("当天早上", "④", None),
     ("回顾", "⑤", ["review"]),
     ("结束", "⑤", ["thanks"]), ("感谢", "⑤", ["thanks"]),
+    # 笼统的放最后
+    ("前一天", "③", None), ("活动提醒", "③", None), ("提醒", "③", None),
 ]
 
 

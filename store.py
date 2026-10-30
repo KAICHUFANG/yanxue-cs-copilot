@@ -277,6 +277,22 @@ def _archive_record(record: Dict[str, Any], reason: str) -> str:
 
 
 # ---------------------------------------------------------------- 校验
+# 推文标题常见写法：「“公众号名”第十八期丨“活动名”」、「第18期|活动名」
+# 模型录入时会把整串当活动名存进去，于是群文案里出现
+#   欢迎加入第十八期「“山海科普研学”第十八期丨“海大蓝境”海洋生物标本馆」活动群
+# 活动名只该是「丨」后面的那一截。这里用代码切，不指望模型每次都对。
+_TITLE_SPLIT = ("丨", "｜", "|")
+
+
+def clean_title(value: Any) -> str:
+    """把「公众号名+期次丨活动名」切成活动名本身。"""
+    s_ = str(value or "").strip()
+    for sep in _TITLE_SPLIT:
+        if sep in s_:
+            s_ = s_.split(sep)[-1].strip()
+    return s_
+
+
 def _validate_one(field: str, value: Any) -> Tuple[bool, str]:
     """校验单个字段。返回 (是否通过, 错误说明)。"""
     if field == "date":
@@ -383,6 +399,10 @@ def update_activity(activity_id: Optional[str], updates: Dict[str, Any],
         if not ok:
             errors.append(f"{field}: {msg}")
             continue
+        if field == "title":
+            value = clean_title(value)
+        if field == "subtitle":
+            value = str(value).strip()
         accepted[field] = int(value) if field == "capacity" else value
 
     if errors:
