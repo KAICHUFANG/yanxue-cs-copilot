@@ -40,10 +40,9 @@ DATA_DIR = ROOT / "data"
 DATA_FILE = Path(os.getenv("ACTIVITIES_FILE", DATA_DIR / "activities.json"))
 
 # ---- 进校预约的被访人信息 ----
-# 这两个值会填进「进校预约提醒」的文案里（{{被访人姓名}} / {{被访人电话}}）。
-# 属于个人信息，只写在 .env，不进仓库、不进 data/。
-VISIT_TARGET_NAME = os.getenv("VISIT_TARGET_NAME", "").strip()
-VISIT_TARGET_PHONE = os.getenv("VISIT_TARGET_PHONE", "").strip()
+# 已迁到 data/activities.json 的顶层 team_info（唯一来源）。
+# 以前这里还有两个 .env 常量做兜底，结果出现双源：有人改了 .env 却发现没生效
+# （renderer 优先用 team_info）。单一来源比「多一层保险」重要。
 
 # 使用记录里记成谁。本地模式下一个人一台电脑，所以在 .env 里写死最省事，
 # 不需要在界面上多一个输入框（用户明确要求：记录不要放在面板里）。
@@ -96,15 +95,12 @@ def reload() -> None:
     必须调：模块级的 API_KEY / MODEL 是启动时读的一次快照，
     只改文件不重读的话，界面显示「已保存」但程序still 用旧值（这个坑很隐蔽）。
     """
-    global API_KEY, BASE_URL, MODEL, VISIT_TARGET_NAME, VISIT_TARGET_PHONE
-    global CHAT_LOG_OPERATOR
+    global API_KEY, BASE_URL, MODEL, CHAT_LOG_OPERATOR
     global TEMPERATURE, MAX_TOOL_ROUNDS
     load_dotenv(ENV_PATH, override=True)
     API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
     BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
     MODEL = os.getenv("MODEL_NAME", "deepseek-chat").strip()
-    VISIT_TARGET_NAME = os.getenv("VISIT_TARGET_NAME", "").strip()
-    VISIT_TARGET_PHONE = os.getenv("VISIT_TARGET_PHONE", "").strip()
     CHAT_LOG_OPERATOR = os.getenv("CHAT_LOG_OPERATOR", "").strip()
     TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
     MAX_TOOL_ROUNDS = int(os.getenv("MAX_TOOL_ROUNDS", "6"))
@@ -126,8 +122,6 @@ def describe() -> str:
         f"接口地址  : {BASE_URL}",
         f"使用的 Key: {mask(API_KEY)}（来自 .env）",
         f"知识库    : {DATA_FILE}",
-        f"进校预约被访人: {VISIT_TARGET_NAME or '(未配置)'} / "
-        f"{(VISIT_TARGET_PHONE[:3] + '****' + VISIT_TARGET_PHONE[-2:]) if len(VISIT_TARGET_PHONE) > 5 else (VISIT_TARGET_PHONE or '(未配置)')}",
     ]
     if _ENV_KEY_BEFORE and _ENV_KEY_BEFORE != API_KEY:
         lines.append(

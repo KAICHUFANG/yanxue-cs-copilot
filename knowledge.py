@@ -58,10 +58,13 @@ def load_team_info() -> Dict[str, Any]:
     """
     kb = _load_json(config.DATA_FILE)
     info = kb.get("team_info") or {}
-    # 老版本把它放在 .env，读不到时兜底回去，免得已部署的机器突然失效
-    name = str(info.get("visit_target_name") or "").strip() or config.VISIT_TARGET_NAME
-    phone = str(info.get("visit_target_phone") or "").strip() or config.VISIT_TARGET_PHONE
-    return {"visit_target_name": name, "visit_target_phone": phone}
+    # 唯一来源就是这里。以前还从 .env 做兜底，结果出现了双源：
+    # 有人改了 .env 却发现没生效（renderer 优先用 team_info）。
+    # 单一来源比「多一层保险」重要 —— 改不到的地方等于坏的地方。
+    return {
+        "visit_target_name": str(info.get("visit_target_name") or "").strip(),
+        "visit_target_phone": str(info.get("visit_target_phone") or "").strip(),
+    }
 
 
 def save_team_info(name: str, phone: str) -> None:

@@ -260,15 +260,21 @@ def copy_layer_tests() -> int:
     check("阶段② 手动发送项被标出来（名片 + 示例图）",
           sum(1 for m in d["messages"] if m.get("manual")) == 2)
 
-    # ② 被访人信息从 .env 注入；没配置就必顶占位符进未填，不能留空白
+    # ② 被访人信息来自 activities.json 的 team_info（唯一来源；以前从 .env 兜底，已去掉）
     first = d["messages"][0]["text"]
-    if config.VISIT_TARGET_NAME and config.VISIT_TARGET_PHONE:
-        check(".env 里的被访人姓名/电话填进了预约文案",
-              config.VISIT_TARGET_NAME in first and config.VISIT_TARGET_PHONE in first)
-    saved = (config.VISIT_TARGET_NAME, config.VISIT_TARGET_PHONE)
-    config.VISIT_TARGET_NAME = config.VISIT_TARGET_PHONE = ""
-    d2 = json.loads(renderer.render_group_messages("S16", stage="②"))
-    config.VISIT_TARGET_NAME, config.VISIT_TARGET_PHONE = saved
+    _team = knowledge.load_team_info()
+    if _team["visit_target_name"] and _team["visit_target_phone"]:
+        check("team_info 里的被访人姓名/电话填进了预约文案",
+              _team["visit_target_name"] in first and _team["visit_target_phone"] in first)
+    check("被访人只有 team_info 一个来源（.env 里不再有 VISIT_TARGET_*）",
+          not hasattr(config, "VISIT_TARGET_NAME"))
+    # 临时清空 team_info，验证「没配 → 保留占位符并申报」
+    _orig = knowledge.load_team_info
+    knowledge.load_team_info = lambda *a, **k: {"visit_target_name": "", "visit_target_phone": ""}
+    try:
+        d2 = json.loads(renderer.render_group_messages("S16", stage="②"))
+    finally:
+        knowledge.load_team_info = _orig
     check("没配被访人信息时保留占位符并进未填清单",
           "{{被访人姓名}}" in d2["unfilled_summary"]
           and "{{被访人姓名}}" in d2["messages"][0]["text"])
@@ -304,7 +310,9 @@ def copy_layer_tests() -> int:
     print("\n" + "-" * 78)
     print("活动回顾推文存储（不走模型）")
     print("-" * 78)
-    import knowledge
+    # 注意：这里不要再写 import knowledge —— 模块顶部已 import，
+    # 函数内再 import 会让「该函数里所有 knowledge 引用」都变成局部变量，
+    # 前面用到的行会抛 UnboundLocalError（踩过）。
     review_dir = TMP_DATA / "articles" / "reviews"
     shutil.rmtree(review_dir, ignore_errors=True)
 
@@ -430,6 +438,19 @@ def data_hygiene_tests() -> int:
     check("流程文档里不再抄写模板原文", not in_flow, f"仍有 {len(in_flow)} 条")
     check("生成的群文案原文.md 收录了全部模板", len(in_gen) == len(texts),
           f"{len(in_gen)}/{len(texts)}")
+    # 只比首行是不够的：数据改了措辞但首行没变，文档就会静默过期（真的发生过）
+    # 比对范围要包含两个数据源：正文既可能来自 group_messages，
+    # 也可能来自 processes（进校预约发送包是引用过来的）。只比一个会全红（误报过）。
+    _data_blob = (json.dumps(book, ensure_ascii=False)
+                  + json.dumps(json.loads((TMP_DATA / "processes.json").read_text(encoding="utf-8")),
+                               ensure_ascii=False))
+    _residue = [ln.strip() for ln in gen.splitlines()
+                if len(ln.strip()) >= 12
+                and not ln.strip().startswith(("#", ">", "*", "-", "|", "（"))
+                and ln.strip() not in _data_blob
+                and "{{" not in ln]
+    check("生成的群文案原文.md 没有过期残留（文档里每句都能在数据里找到）",
+          not _residue, f"{len(_residue)} 行残留，例如：{_residue[:2]}")
 
     # ⑨ 发定位文案：三种状态三种行为（纯代码，用户要求「状态未声明就拒绝生成」）
     import json as _json, renderer as _r
