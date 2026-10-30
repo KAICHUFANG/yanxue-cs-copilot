@@ -471,6 +471,35 @@ def data_hygiene_tests() -> int:
           store._validate_one("nav_map_available", "不发")[0] is False)
     _set_nav(None)
 
+    # ⑨b 导航图口径：所有文案与规则里都不许再出现「前一天晚上发导航图」
+    import json as _j2
+    _gm = _j2.loads((TMP_DATA / "group_messages.json").read_text(encoding="utf-8"))
+    _pol = _j2.loads(TMP.read_text(encoding="utf-8")).get("policies", {})   # TMP = 活动数据副本
+    _blob = _j2.dumps(_gm, ensure_ascii=False) + _j2.dumps(_pol, ensure_ascii=False)
+    # 只看「提到导航的文本」，别扫阶段名（③ 的 when 本来就叫「活动前一天晚上」）
+    _nav_texts = []
+    for st in _gm["timeline"]:
+        for m in st.get("messages") or []:
+            for f in ("text", "content_note"):
+                v = m.get(f) or ""
+                if "导航" in v:
+                    _nav_texts.append(v)
+    for sn in (_gm.get("publish_flow") or {}).get("side_notes") or []:
+        if "导航" in (sn.get("title") or "") + (sn.get("text") or ""):
+            _nav_texts.append(sn.get("text") or "")
+    _nav_texts.append((_pol.get("nav_photo_policy") or {}).get("text") or "")
+    _bad_nav = [t for t in _nav_texts
+                if ("前一天晚上" in t) or ("昨晚已发" in t)]
+    check("导航相关的文案/规则里没有「前一天晚上发 / 昨晚已发」的旧承诺",
+          not _bad_nav, str(_bad_nav)[:100])
+    check("导航图口径写明「活动开始前半小时」",
+          "开始前半小时" in _blob)
+    check("导航图状态未声明时要求「确认一下再回」",
+          "确认一下" in (_pol.get("nav_photo_policy", {}) or {}).get("text", ""))
+    _alert_old = [m.get("text") or "" for st in _gm["timeline"] for m in (st.get("messages") or [])
+                  if "导航" in (m.get("text") or "") and "前一天晚上" in (m.get("text") or "")]
+    check("发给家长的文案里没有「导航图前一天晚上发」的承诺", not _alert_old, str(_alert_old)[:80])
+
     # ⑩ 回顾分享的前置条件：没有本期回顾推文时不许生成（用户报过「现在就生成」）
     reset()
     # 前面的 copy_layer_tests 会往测试副本里存一份回顾推文，这里先清掉，
@@ -529,7 +558,8 @@ def data_hygiene_tests() -> int:
     ctx = knowledge.build_context()
     check("集合点已填 → 上下文里没有「集合点每期不同」", "集合点每期不同" not in ctx)
     check("集合点已填 → 上下文里有那个具体地点", "海南大学海洋生物标本馆" in ctx)
-    check("导航照片那条仍然保留（它确实还没拍）", "导航照片" in ctx)
+    check("导航图/引导图那条仍然保留（现场拍的，不能承诺已就绪）",
+          "导航图" in ctx or "引导图" in ctx)
     check("条件开关 applies_when_empty 没漏进上下文", "applies_when_empty" not in ctx)
 
     reset()
