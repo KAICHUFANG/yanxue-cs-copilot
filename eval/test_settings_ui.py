@@ -38,7 +38,18 @@ config.DATA_FILE = TMP_DATA / "activities.json"
 store.DATA_DIR = TMP_DATA
 store.BACKUP_DIR = TMP_DATA / "backups"
 
-ENV = PROJ / ".env"
+# ⚠️ 必须隔离 .env：save_team_info 会写 config.ENV_PATH，而它默认指向真实的 .env。
+# 曾经因为没隔离，跑一次「负责人是李老师」的用例就把真实 .env 里的被访人姓名改成了「李老师」
+# （5 次里 4 次中招）。这里把 ENV_PATH 指到测试副本，测试再也改不到真实配置。
+_ENV_COPY = TMP_DATA / ".env.testcopy"
+if (PROJ / ".env").exists():
+    shutil.copy2(PROJ / ".env", _ENV_COPY)
+else:
+    _ENV_COPY.write_text("DEEPSEEK_API_KEY=sk-test" + chr(10), encoding="utf-8")
+config.ENV_PATH = _ENV_COPY
+
+
+ENV = PROJ / ".env"          # 真实配置（只用于「开始前备份」，不再被测试写）
 BAK = PROJ / ".env.testbak"
 TMP_ACT = TMP_DATA / "activities.json"
 
@@ -63,6 +74,7 @@ def texts(at) -> str:
 
 def main() -> int:
     shutil.copy2(ENV, BAK)
+    ENV_UNDER_TEST = config.ENV_PATH      # 测试实际写入的是这份副本（见文件顶部的隔离段）
     print("=" * 72)
     print("界面「API 设置」：填 Key → 保存并测试")
     print("=" * 72)
@@ -100,11 +112,11 @@ def main() -> int:
         check("错误模型名会报错，不是静默通过", "连不上" in body, body[:200])
         check("报错里给了排查方向", "接口地址" in body or "/v1" in body, body[:200])
         check(".env 里确实写成了那个模型名",
-              "no-such-model-xyz" in ENV.read_text(encoding="utf-8"))
+              "no-such-model-xyz" in ENV_UNDER_TEST.read_text(encoding="utf-8"))
 
         # 立刻还原！不然后面那次真实问答会拿着坏模型名去请求，直接 404，
         # 表现为「日志里 0 条」——排查了半天才发现是测试自己挖的坑。
-        shutil.copy2(BAK, ENV)
+        shutil.copy2(BAK, ENV_UNDER_TEST)   # 只还测试副本
         config.reload()
         import agent as _agent
         _agent.reset_client()
@@ -122,8 +134,8 @@ def main() -> int:
         check("走对话框改被访人信息，走的是 save_team_info",
               "save_team_info" in (r.get("trace") or []), str(r.get("trace")))
         check("新电话写进了 .env",
-              "13900002222" in ENV.read_text(encoding="utf-8"),
-              ENV.read_text(encoding="utf-8")[-120:])
+              "13900002222" in ENV_UNDER_TEST.read_text(encoding="utf-8"),
+              ENV_UNDER_TEST.read_text(encoding="utf-8")[-120:])
         kb2 = json.loads(TMP_ACT.read_text(encoding="utf-8"))
         check("没有污染活动数据（activities.json 里不存老师信息）",
               "visit_target_phone" not in (kb2.get("activities") or [{}])[0]
@@ -131,7 +143,7 @@ def main() -> int:
         # 换期不影响 .env，本来就是分开的
         store.update_activity(None, {"session_label": "第九十九期"}, replace=True)
         check("换期后被访人信息仍在（因为他不在活动数据里）",
-              "13900002222" in ENV.read_text(encoding="utf-8"))
+              "13900002222" in ENV_UNDER_TEST.read_text(encoding="utf-8"))
         knowledge.save_team_info(before_team.get("visit_target_name", ""),
                                 before_team.get("visit_target_phone", ""))
 
@@ -202,11 +214,16 @@ def main() -> int:
         check("长回答完整保存，末尾标记在（证明没截断到 40 字）",
               (rows2[0].get("a") or "").endswith(long_tail), (rows2[0].get("a") or "")[-25:])
     finally:
-        # 无论上面怎么挂，都把 .env 还原，绝不留一个坏模型名给客服
-        shutil.copy2(BAK, ENV)
-        BAK.unlink(missing_ok=True)
+        # 无论上面怎么挂，都把测试副本还原，绝不留一个坏模型名给客服。
+        # 真实 .env 从头到尾没被写过（ENV_PATH 已指向副本），这里只还副本。
+        _target = globals().get("ENV_UNDER_TEST") or config.ENV_PATH
+        try:
+            shutil.copy2(BAK, _target)
+            BAK.unlink(missing_ok=True)
+        except OSError:
+            pass
         config.reload()
-        print(f"\n  ↩️  .env 已还原（当前模型：{config.MODEL}）")
+        print(f"\n  ↩️  测试副本已还原（当前模型：{config.MODEL}）")
 
     print("\n" + ("全部通过" if not fails else f"失败 {fails} 条"))
     return 1 if fails else 0

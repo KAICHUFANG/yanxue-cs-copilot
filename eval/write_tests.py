@@ -55,6 +55,17 @@ import store        # noqa: E402
 store.DATA_DIR = TMP_DATA
 store.BACKUP_DIR = TMP_DATA / "backups"
 
+# ⚠️ 必须隔离 .env：save_team_info 会写 config.ENV_PATH，而它默认指向真实的 .env。
+# 曾经因为没隔离，跑一次「负责人是李老师」的用例就把真实 .env 里的被访人姓名改成了「李老师」
+# （5 次里 4 次中招）。这里把 ENV_PATH 指到测试副本，测试再也改不到真实配置。
+_ENV_COPY = TMP_DATA / ".env.testcopy"
+if (PROJ / ".env").exists():
+    shutil.copy2(PROJ / ".env", _ENV_COPY)
+else:
+    _ENV_COPY.write_text("DEEPSEEK_API_KEY=sk-test" + chr(10), encoding="utf-8")
+config.ENV_PATH = _ENV_COPY
+
+
 
 WATCH = ("session_label", "title", "date", "time_range", "location",
          "meeting_point", "meeting_time", "indoor_outdoor", "grouping",
