@@ -30,6 +30,7 @@ import hashlib
 import json
 import re
 import shutil
+from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional
 
@@ -49,35 +50,41 @@ def load_activities() -> Dict[str, Any]:
     return kb
 
 
-def load_team_info() -> Dict[str, Any]:
-    """团队级信息（被访人姓名/电话）。放在 activities.json 顶层，换期不丢。
+# 老师（进校预约的被访人）姓名/电话。
+# **单独一个文件，且已 gitignore**：这是个人信息，绝不能进公开仓库。
+# 踩过的错：一度塞进 activities.json（被 git 跟踪）→ 手机号被推到 GitHub 上。
+# 现在的原则：个人信息只落在 data/team_info.local.json，仓库里只有 .example 模板。
+TEAM_INFO_REL = "team_info.local.json"
 
-    为什么不做成 config 常量：它不是部署参数，是业务信息。
-    放在 .env 里的直接后果就是「界面里被塞进了 API 设置那一栏」——
-    按存放位置分组，就会把不相关的东西凑到一起。
-    """
-    kb = _load_json(config.DATA_FILE)
-    info = kb.get("team_info") or {}
-    # 唯一来源就是这里。以前还从 .env 做兜底，结果出现了双源：
-    # 有人改了 .env 却发现没生效（renderer 优先用 team_info）。
-    # 单一来源比「多一层保险」重要 —— 改不到的地方等于坏的地方。
+
+def team_info_path():
+    return Path(config.DATA_DIR) / TEAM_INFO_REL
+
+
+def load_team_info() -> Dict[str, Any]:
+    """读被访人信息。文件不存在时返回空串（渲染时会留占位符并申报）。"""
+    try:
+        d = json.loads(team_info_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"visit_target_name": "", "visit_target_phone": ""}
     return {
-        "visit_target_name": str(info.get("visit_target_name") or "").strip(),
-        "visit_target_phone": str(info.get("visit_target_phone") or "").strip(),
+        "visit_target_name": str(d.get("visit_target_name") or "").strip(),
+        "visit_target_phone": str(d.get("visit_target_phone") or "").strip(),
     }
 
 
 def save_team_info(name: str, phone: str) -> None:
-    """写回 activities.json 顶层（只动 team_info，其余原样）。"""
-    kb = _load_json(config.DATA_FILE)
-    info = dict(kb.get("team_info") or {})
+    """写回本地文件（只动这两个字段）。这个文件不进仓库。"""
+    d = load_team_info()
     if name.strip():
-        info["visit_target_name"] = name.strip()
+        d["visit_target_name"] = name.strip()
     if phone.strip():
-        info["visit_target_phone"] = phone.strip()
-    kb["team_info"] = info
-    with open(config.DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(kb, f, ensure_ascii=False, indent=2)
+        d["visit_target_phone"] = phone.strip()
+    d["_note"] = "本文件含个人信息，已在 .gitignore 里，不进仓库、不进 GitHub。"
+    path = team_info_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(d, ensure_ascii=False, indent=2) + chr(10),
+                    encoding="utf-8", newline=chr(10))
 
 
 def load_processes() -> Dict[str, Any]:
