@@ -256,6 +256,9 @@ C. question —— 在问问题
   → 一律 update，把这些字段抽出来。**不要因为里面有「招募」两个字就当成 copy 去写文案**
 · 「推广」「招募」「拉人」「朋友圈」「引流」「私域」→ 一律 copy + promo
   （前提是她在**要一段文案**，不是在**贴一份资料**）
+· 「发定位的文案」「刚发了定位要说什么」→ copy + template，stage 填**发定位文案**
+  （它按「这次有没有导航图」分两版，状态没存就生成不了）
+· 「这次有导航图」「这次不发导航图」→ update，字段 nav_map_available 填「有」或「没有」
 · 「欢迎语」「群公告」「活动提醒」「结束感谢」→ copy + template，stage 填对应的那一段
 · 只说「活动群文案」「群文案」「整个群的通知」但没说哪一段 → copy + template，
   **stage 填「全部」**（客服要的就是全流程，不要反问）
@@ -307,7 +310,7 @@ __FIELDS__
   capacity 就不要填，让它空着（空着界面会提示客服去确认，填错了没人发现）
 
 只输出 JSON：
-{"kind": "update" | "copy" | "question", "is_article": true | false, "is_new_activity": true | false, "article_kind": "promo" | "review" | "", "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语/进校预约提醒/活动提醒/出发提醒/结束感谢；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
+{"kind": "update" | "copy" | "question", "is_article": true | false, "is_new_activity": true | false, "article_kind": "promo" | "review" | "", "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语/进校预约提醒/活动提醒/出发提醒/结束感谢/发定位文案；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
 
 promo_channel 怎么填：
 · 提到「朋友圈」「盆友圈」「pyq」「圈里」「动态」→ moments
@@ -668,6 +671,11 @@ def render_copy(stage_text: str, all_when_empty: bool = True) -> str:
         对话框路径必须传 False —— 否则「写推广文案」会被渲染成「欢迎语」，
         因为 stage=None 时渲染器从第一个阶段开始输出。这是真实报过的 bug。
     """
+    # 「发定位的文案」不属于五段群文案（它按「这次有没有导航图」分两版），
+    # 所以在阶段路由之前单独判一次。
+    if "定位" in (stage_text or ""):
+        return renderer.render_location_share(knowledge.current_activity_id() or "")
+
     key, tags = None, None
     for word, no, tg in _STAGE_HINT:
         if word in (stage_text or ""):

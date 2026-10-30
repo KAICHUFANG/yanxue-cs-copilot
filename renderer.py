@@ -447,3 +447,42 @@ def render_publish_flow(activity_id: str) -> str:
     lines.append("记不住就先看这一句：欢迎 → 预约 → 前一天提醒 → 当天出发 → 结束感谢 → 回顾推广；"
                  "定位随时发，引导图活动开始前发。")
     return chr(10).join(lines).rstrip() + chr(10)
+
+
+def _half_hour_before(activity: Dict[str, Any], minutes: int = 30) -> str:
+    """从时段「15:00-17:00」算出「开始前半小时」是几点。算不出就返回空串。"""
+    raw = str((activity or {}).get("time_range") or "")
+    m = re.match(r"\s*(\d{1,2}):(\d{2})\s*[-–~至]", raw)
+    if not m:
+        return ""
+    total = int(m.group(1)) * 60 + int(m.group(2)) - minutes
+    if total < 0:
+        return ""
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def render_location_share(activity_id: str) -> str:
+    """发完「集合点定位」之后紧跟的那段说明文案。
+
+    按 activities.json 的 nav_map_available 分两版：
+      有   → 说明导航图会在活动开始前半小时发
+      没有 → 说明这次没有单独的导航图
+    状态没声明（空）→ **不生成**，返回提示让客服先去定这个状态。
+      为什么不猜：两版说法完全不同，猜错就是跟家长承诺了一张不存在的图，
+      或者明明会发却说没有 —— 都属于发出去要撤回的错误。
+    """
+    activity = load_activity(activity_id)
+    book = json.loads((config.DATA_DIR / "group_messages.json").read_text(encoding="utf-8"))
+    cfg = book.get("location_share") or {}
+    field = cfg.get("field", "nav_map_available")
+    variants = cfg.get("variants") or {}
+    state = str((activity or {}).get(field) or "").strip()
+
+    if state not in variants:
+        return "⏸ " + (cfg.get("missing_note") or "这次有没有导航图还没定，先说一句再生成。")
+
+    text = variants[state]
+    when = _half_hour_before(activity or {})
+    if "{{导航图时间}}" in text:
+        text = text.replace("{{导航图时间}}", when or "活动开始前半小时")
+    return text.strip()

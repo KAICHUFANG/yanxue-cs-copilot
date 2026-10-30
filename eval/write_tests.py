@@ -431,7 +431,47 @@ def data_hygiene_tests() -> int:
     check("生成的群文案原文.md 收录了全部模板", len(in_gen) == len(texts),
           f"{len(in_gen)}/{len(texts)}")
 
-    # ⑨ 回顾分享的前置条件：没有本期回顾推文时不许生成（用户报过「现在就生成」）
+    # ⑨ 发定位文案：三种状态三种行为（纯代码，用户要求「状态未声明就拒绝生成」）
+    import json as _json, renderer as _r
+    _aid = (knowledge.get_activity() or {}).get("id") or "S16"
+    # 注意：活动数据在 TMP（= config.DATA_FILE = tmp_write.json），
+    # 不是 TMP_DATA/activities.json —— 后者是 data 目录的副本，renderer 不读它。
+    _act_file = TMP
+
+    def _set_nav(v):
+        kb = _json.loads(_act_file.read_text(encoding="utf-8"))
+        if v is None:
+            kb["activities"][0].pop("nav_map_available", None)
+        else:
+            kb["activities"][0]["nav_map_available"] = v
+        _act_file.write_text(_json.dumps(kb, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    _set_nav(None)
+    out_none = _r.render_location_share(_aid)
+    check("导航图状态未声明 → 拒绝生成正文",
+          "先不生成" in out_none or "还没定" in out_none, out_none[:60])
+    check("拒绝时告诉客服该说什么（有导航图 / 不发导航图）",
+          "有导航图" in out_none and "不发导航图" in out_none)
+
+    _set_nav("有")
+    out_yes = _r.render_location_share(_aid)
+    check("状态=有 → 文案说明「活动开始前半小时」发导航图",
+          "开始前半小时" in out_yes, out_yes[:80])
+    check("状态=有 → 自动算出开始前半小时的具体时间（fixture 15:00 → 14:30）",
+          "14:30" in out_yes, out_yes[:80])
+
+    _set_nav("没有")
+    out_no = _r.render_location_share(_aid)
+    check("状态=没有 → 文案改成「这次没有单独做导航图」",
+          "没有单独做导航图" in out_no, out_no[:80])
+    check("状态=没有 → 不能再出现「开始前半小时」这种承诺",
+          "开始前半小时" not in out_no)
+
+    check("非法状态会被 store 拒绝",
+          store._validate_one("nav_map_available", "不发")[0] is False)
+    _set_nav(None)
+
+    # ⑩ 回顾分享的前置条件：没有本期回顾推文时不许生成（用户报过「现在就生成」）
     reset()
     # 前面的 copy_layer_tests 会往测试副本里存一份回顾推文，这里先清掉，
     # 否则「没有回顾推文」这个前提不成立（测试之间互相污染过一次）。

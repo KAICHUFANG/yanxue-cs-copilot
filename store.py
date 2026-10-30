@@ -48,6 +48,7 @@ ALLOWED_FIELDS: Dict[str, str] = {
     "fee_includes": "费用包含项，字符串列表",
     "insurance": "保险说明",
     "dress_code": "着装要求",
+    "nav_map_available": "这次活动有没有导航图：有 / 没有（没定就留空）",
 }
 
 # 团队级字段：写在 activities.json **顶层** team_info 里，不属于某一期。
@@ -76,6 +77,9 @@ REQUIRED_FOR_COPY = [
 ]
 
 _STATUS_ENUM = {"报名中", "已结束", "待确认"}
+# 「这次活动有没有导航图」——只有两个合法值。
+# 留空 = 还没声明，这时不允许生成「发定位文案」（它要按有没有导航图分两版）。
+_NAV_MAP_ENUM = {"有", "没有"}
 
 # ---------------------------------------------------------------- 派生字段
 # 这三个字段都能从别处算出来，所以**不存进文件**：
@@ -308,6 +312,9 @@ def _validate_one(field: str, value: Any) -> Tuple[bool, str]:
             int(value)
         except (TypeError, ValueError):
             return False, "时长必须是数字（分钟），例如 180"
+    elif field == "nav_map_available":
+        if str(value).strip() not in _NAV_MAP_ENUM:
+            return False, f"导航图状态只能是 {'/'.join(sorted(_NAV_MAP_ENUM))}"
     elif field == "status":
         if value not in _STATUS_ENUM:
             return False, f"状态只能是 {'/'.join(sorted(_STATUS_ENUM))}"
