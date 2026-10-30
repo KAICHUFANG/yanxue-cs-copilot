@@ -483,10 +483,15 @@ def data_hygiene_tests() -> int:
 
     _set_nav("没有")
     out_no = _r.render_location_share(_aid)
-    check("状态=没有 → 文案改成「这次没有单独做导航图」",
-          "没有单独做导航图" in out_no, out_no[:80])
+    check("状态=没有 → 文案改成「不另发导航图」",
+          "不另发导航图" in out_no, out_no[:80])
     check("状态=没有 → 不能再出现「开始前半小时」这种承诺",
           "开始前半小时" not in out_no)
+    # 概念：导航图是「帮家长找精确集合位置」，不是指路（路线由定位解决）
+    check("导航图不被说成指路（不出现「怎么走 / 哪条路线」）",
+          not any(w in out_yes + out_no for w in ("怎么走", "哪条路线", "走哪条路")))
+    check("导航图说明里写的是找「精确集合位置」",
+          "入口" in out_yes or "集合点" in out_yes, out_yes[:80])
 
     check("非法状态会被 store 拒绝",
           store._validate_one("nav_map_available", "不发")[0] is False)
