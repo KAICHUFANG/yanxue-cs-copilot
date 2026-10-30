@@ -288,6 +288,17 @@ with right:
     else:
         st.success("信息齐全")
 
+    # 条件缺项：不是「所有文案都要」，但缺了某些文案就生成不了。
+    # 不在这里提示的话，面板会说「信息齐全」，而一问文案却被拒 —— 客服会以为程序坏了。
+    _cond = []
+    if not str(act.get("nav_map_available") or "").strip():
+        _cond.append("这次有没有导航图（发定位文案要用）")
+    if not str(act.get("meeting_point") or "").strip():
+        _cond.append("集合地点（发定位文案要用）")
+    if _cond:
+        st.info("另有这几项没定，只影响特定文案：" + chr(10) + chr(10)
+                + chr(10).join(f"· {c}" for c in _cond))
+
     # 必填项清单：客服最关心这一块，所以放最上面、不折叠
     rows = []
     for f, name in store.REQUIRED_FOR_COPY:

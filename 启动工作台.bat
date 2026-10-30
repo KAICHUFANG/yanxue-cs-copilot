@@ -1,15 +1,22 @@
 @echo off
-%SystemRoot%\System32\chcp.com 65001 >nul
+chcp 65001 >nul
 cd /d "%~dp0"
+
+rem ============================================================
+rem  Shanhai Kexue - Customer Service Workbench (dev launcher)
+rem  Requires .venv in this folder (see README > Quick start).
+rem  NOTE: keep this file ASCII-only. cmd mis-splits multi-byte
+rem        characters in .bat files; Chinese text goes to .txt.
+rem ============================================================
 
 if not exist ".venv\Scripts\python.exe" goto NOVENV
 
-echo Starting workbench on http://localhost:8501
-echo Browser will open in a few seconds. Keep this window open; close it to stop.
+echo.
+echo  Starting the workbench. Your browser will open in a few seconds.
+echo  Address: http://localhost:8501
+echo  Close this window to stop the service.
 echo.
 
-rem Streamlit 用 headless 模式启动，否则首次运行会卡在"输入邮箱"那一问。
-rem 浏览器由下面这条后台命令延迟打开，等端口起来了再开，避免白页。
 start "" /min powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 7; Start-Process 'http://localhost:8501'"
 
 .venv\Scripts\python.exe -m streamlit run app_streamlit.py --server.port 8501 --server.headless true --browser.gatherUsageStats false
@@ -18,15 +25,15 @@ goto END
 
 :NOVENV
 echo.
-echo [ERROR] .venv not found. Run these first:
-echo   py -3.11 -m venv .venv
-echo   .venv\Scripts\python.exe -m pip install -r requirements.txt
+echo  [ERROR] .venv not found. Run these first:
+echo    py -3.11 -m venv .venv
+echo    .venv\Scripts\python.exe -m pip install -r requirements.txt
 pause
 goto END
 
 :FAILED
 echo.
-echo [ERROR] Workbench exited with an error. See the message above.
+echo  [ERROR] Failed to start. Send a screenshot of this window.
 pause
 
 :END

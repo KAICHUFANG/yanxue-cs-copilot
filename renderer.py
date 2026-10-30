@@ -481,6 +481,13 @@ def render_location_share(activity_id: str) -> str:
     if state not in variants:
         return "⏸ " + (cfg.get("missing_note") or "这次有没有导航图还没定，先说一句再生成。")
 
+    # 这段话第一句是「刚把活动集合点的定位发群里了」——集合点没定就不可能发过定位，
+    # 生成出来等于让客服说一句假话（笔记 A3：跑通 ≠ 需求满足）。
+    if not str((activity or {}).get("meeting_point") or "").strip():
+        return ("⏸ 集合点还没定，所以「发定位的文案」暂时生成不了。\n\n"
+                "先把集合地点告诉我（例如「集合地点在海南大学海洋生物标本馆」），"
+                "定了之后你才能把定位发到群里，这段话才有意义。")
+
     text = variants[state]
     when = _half_hour_before(activity or {})
     if "{{导航图时间}}" in text:

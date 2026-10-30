@@ -197,15 +197,16 @@
         "专项研学保险"
       ],
       "status": "待确认",
-      "_last_updated": "2026-10-30 21:03",
+      "_last_updated": "2026-10-30 21:13",
       "_replaced_from": "第十六期",
       "_replaced_at": "2026-10-29 17:36",
       "target_audience": "3-9年级学生",
       "indoor_outdoor": "室内",
       "meeting_time": "15:00",
-      "meeting_point": "海南大学海洋生物标本馆",
       "insurance": "会买保险",
-      "dress_code": "无"
+      "dress_code": "无",
+      "nav_map_available": "有",
+      "meeting_point": "海南大学海洋生物标本馆"
     }
   ],
   "agent_behavior_rules": {

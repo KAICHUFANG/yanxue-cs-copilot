@@ -310,7 +310,7 @@ __FIELDS__
   capacity 就不要填，让它空着（空着界面会提示客服去确认，填错了没人发现）
 
 只输出 JSON：
-{"kind": "update" | "copy" | "question", "is_article": true | false, "is_new_activity": true | false, "article_kind": "promo" | "review" | "", "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语/进校预约提醒/活动提醒/出发提醒/结束感谢/发定位文案；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
+{"kind": "update" | "copy" | "question", "is_article": true | false, "is_new_activity": true | false, "article_kind": "promo" | "review" | "", "copy_type": "template" | "promo"（仅 copy 时用）, "promo_channel": "group" | "moments"（仅 promo 时用，见下）, "stage": "欢迎语（也叫拉群/建群欢迎语）/进校预约提醒/活动提醒（前一天晚上那条）/出发提醒（当天早上那条）/结束感谢（也叫圆满结束）/回顾分享（活动回顾推文）/发定位文案；没说哪一段就填「全部」（仅 template 时用）", "updates": {字段: 值}, "reason": "一句话说明依据"}
 
 promo_channel 怎么填：
 · 提到「朋友圈」「盆友圈」「pyq」「圈里」「动态」→ moments
@@ -536,15 +536,25 @@ def _is_other_session(decided: Dict[str, Any]) -> bool:
       ① 代码比期次 —— 推文里写明了期次，而且和库里当前那一期不一样。
          这一条最可靠，因为期次是固定字段，不靠模型自由发挥。
       ② 模型判 is_new_activity —— 兜住推文没写期次的情况。
+
+    ⚠️ 这里的「独立」是字面意思：期次比对**必须先于** is_article 判断。
+       审计发现的漏洞：旧代码把期次比对藏在 `if not is_article: return False` 下面，
+       模型一旦把推文判成「不是文章」，代码这条最可靠的信号就被废掉，
+       结果静默走合并——新一期继承了上一期的价格/名额，不报错。
+       （这正是本项目最危险的那类 bug：不报错，只是数据错一期。）
+
     为什么不只用模型：模型偶尔会把「同一期推文重发」判成新一期，
     那会白白清空客服手工补过的集合点。代码这一路能推翻它。
     """
-    if not decided.get("is_article"):
-        return False
+    # 信号①：期次字段明确变了 → 一定是另一期。不看 is_article，不看模型怎么想。
     new_label = str((decided.get("updates") or {}).get("session_label") or "").strip()
     old_label = str((knowledge.get_activity() or {}).get("session_label") or "").strip()
     if new_label and old_label and new_label != old_label:
         return True
+
+    # 信号②：只在确认是文章时才有意义（不是文章就不存在「粘了另一期推文」）
+    if not decided.get("is_article"):
+        return False
     return bool(decided.get("is_new_activity"))
 
 
@@ -679,7 +689,10 @@ def render_copy(stage_text: str, all_when_empty: bool = True) -> str:
     """
     # 「发定位的文案」不属于五段群文案（它按「这次有没有导航图」分两版），
     # 所以在阶段路由之前单独判一次。
-    if "定位" in (stage_text or ""):
+    # 客服不会只说「定位」两个字，常见说法还有「位置」「位置卡片」「刚发了位置」。
+    # 漏了它们就会掉进阶段路由，被当成「全部群文案」把五段一起吐出来（审计发现）。
+    _LOCATE_WORDS = ("定位", "位置卡片", "位置发", "发了位置", "位置说明")
+    if any(w in (stage_text or "") for w in _LOCATE_WORDS):
         return renderer.render_location_share(knowledge.current_activity_id() or "")
 
     key, tags = None, None

@@ -244,6 +244,9 @@ def copy_layer_tests() -> int:
     print("群文案渲染（不走模型，纯代码纪律）")
     print("-" * 78)
     bad = 0
+    # 期次 id 统一从当期数据取（测试副本跑的是冻结题库，不要写死期次）
+    _aid = (knowledge.get_activity() or {}).get("id") or "S16"
+    _act_file = TMP
 
     def check(name, ok, extra=""):
         nonlocal bad
@@ -252,7 +255,7 @@ def copy_layer_tests() -> int:
         print(f"  {'✅' if ok else '❌'} {name}{('   ' + extra) if extra and not ok else ''}")
 
     # ① 进校预约那一段：必须把流程的 4 件 + 门禁提醒全吐出来，而且顺序对
-    d = json.loads(renderer.render_group_messages("S16", stage="②"))
+    d = json.loads(renderer.render_group_messages(_aid, stage="②"))
     labels = [m.get("label", "") for m in d["messages"] if m.get("label") != "这一步必须人工做的"]
     want = ["预约提醒文案", "「海南大学」公众号名片 / 链接", "进校预约填写示例截图",
             "进校门提醒（紧跟预约文案发）", "@所有人 催办话术"]
@@ -272,7 +275,7 @@ def copy_layer_tests() -> int:
     _orig = knowledge.load_team_info
     knowledge.load_team_info = lambda *a, **k: {"visit_target_name": "", "visit_target_phone": ""}
     try:
-        d2 = json.loads(renderer.render_group_messages("S16", stage="②"))
+        d2 = json.loads(renderer.render_group_messages(_aid, stage="②"))
     finally:
         knowledge.load_team_info = _orig
     check("没配被访人信息时保留占位符并进未填清单",
@@ -362,6 +365,9 @@ def data_hygiene_tests() -> int:
     print("数据卫生（不走模型）")
     print("-" * 78)
     bad = 0
+    # 活动数据 = TMP（config.DATA_FILE 指向的副本）；期次从当期数据取，不写死
+    _act_file = TMP
+    _aid = (knowledge.get_activity() or {}).get("id") or "S16"
 
     def check(name, ok, extra=""):
         nonlocal bad
@@ -454,10 +460,6 @@ def data_hygiene_tests() -> int:
 
     # ⑨ 发定位文案：三种状态三种行为（纯代码，用户要求「状态未声明就拒绝生成」）
     import json as _json, renderer as _r
-    _aid = (knowledge.get_activity() or {}).get("id") or "S16"
-    # 注意：活动数据在 TMP（= config.DATA_FILE = tmp_write.json），
-    # 不是 TMP_DATA/activities.json —— 后者是 data 目录的副本，renderer 不读它。
-    _act_file = TMP
 
     def _set_nav(v):
         kb = _json.loads(_act_file.read_text(encoding="utf-8"))
@@ -466,6 +468,12 @@ def data_hygiene_tests() -> int:
         else:
             kb["activities"][0]["nav_map_available"] = v
         _act_file.write_text(_json.dumps(kb, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 发定位文案的前置条件之一是「集合点已定」，而题库 fixture 里 meeting_point 是空的。
+    # 这里先补上，否则下面所有导航图用例都会被 H2 的前置检查拦住（踩过）。
+    _kb0 = _json.loads(_act_file.read_text(encoding="utf-8"))
+    _kb0["activities"][0]["meeting_point"] = "测试用集合点"
+    _act_file.write_text(_json.dumps(_kb0, ensure_ascii=False, indent=2), encoding="utf-8")
 
     _set_nav(None)
     out_none = _r.render_location_share(_aid)
@@ -513,6 +521,37 @@ def data_hygiene_tests() -> int:
           not _english, f"缺中文名：{_english}")
     check("写库确认语用中文名（不用 nav_map_available 这种键名）",
           True if "中文名" in open("agent.py", encoding="utf-8").read() else False)
+
+    # ⑨c 审计补的三条
+    # H2：集合点没定，不许生成「刚发了定位」的文案（否则是让客服说假话）
+    # 顺序很关键：_set_nav() 自己会重读文件再写回，
+    # 所以必须「先设导航图状态，再 pop 集合点」，否则会被它覆盖（踩过一次）。
+    _set_nav("有")
+    kb = _json.loads(_act_file.read_text(encoding="utf-8"))
+    _mp = kb["activities"][0].pop("meeting_point", None)
+    _act_file.write_text(_json.dumps(kb, ensure_ascii=False, indent=2), encoding="utf-8")
+    _out = _r.render_location_share(_aid)
+    check("集合点没定 → 拒绝生成发定位文案，并说明先去定集合点",
+          "集合点还没定" in _out and "先把集合地点" in _out, _out[:60])
+    kb["activities"][0]["meeting_point"] = _mp
+    _act_file.write_text(_json.dumps(kb, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # M2：「位置」类说法也要进发定位链路（只认「定位」会掉进阶段路由吐全部文案）
+    _LOC = ("定位", "位置卡片", "位置发", "发了位置", "位置说明")
+    _says = ["生成发定位的文案", "发个位置卡片的说明", "刚发了位置要说什么"]
+    check("位置类说法都能进发定位链路",
+          all(any(w in s_ for w in _LOC) for s_ in _says), str(_says))
+
+    # M1：提示词 stage 枚举必须覆盖代码认识的所有阶段说法
+    _src = open("agent.py", encoding="utf-8").read()
+    _enum = _src.split('"stage": "')[1].split('"')[0]
+    _alias = {"欢迎": "欢迎语", "拉群": "拉群", "建群": "建群", "预约": "进校预约",
+              "进校": "进校预约", "出发": "出发提醒", "当天早上": "当天早上",
+              "回顾": "回顾分享", "结束": "结束感谢", "感谢": "结束感谢",
+              "前一天": "活动提醒", "活动提醒": "活动提醒"}
+    _miss = [w for w in agent._STAGE_HINT and [x[0] for x in agent._STAGE_HINT]
+             if _alias.get(w, w) not in _enum]
+    check("提示词 stage 枚举覆盖代码认识的全部说法", not _miss, f"缺：{_miss}")
 
     # ⑨b 导航图口径：所有文案与规则里都不许再出现「前一天晚上发导航图」
     import json as _j2
