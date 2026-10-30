@@ -62,6 +62,7 @@ DISPLAY_NAME = {
     "fee_includes": "费用包含",
     "insurance": "保险",
     "dress_code": "着装要求",
+    "nav_map_available": "这次有没有导航图",
     "segments": "活动环节",
     "highlights": "亮点",
     "awards": "奖项",

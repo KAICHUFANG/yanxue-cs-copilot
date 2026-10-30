@@ -241,8 +241,18 @@ required = {f for f, _ in store.REQUIRED_FOR_COPY}
 
 
 def _label(field: str) -> str:
+    """字段 → 界面上给人看的中文名。
+
+    三级兜底（顺序别改）：
+      ① DISPLAY_NAME 里写好的短名（「集合地点」）
+      ② ALLOWED_FIELDS 里的描述取前半段（「这次活动有没有导航图：有 / 没有…」→ 截到冒号前）
+      ③ 实在没有才显示英文键名 —— 但这时应该去补 ①，不要让客服看英文。
+    """
     from app_workbench import DISPLAY_NAME
-    return DISPLAY_NAME.get(field, field)
+    if field in DISPLAY_NAME:
+        return DISPLAY_NAME[field]
+    desc = (store.ALLOWED_FIELDS.get(field) or "").split("，")[0].split("（")[0].split("：")[0].strip()
+    return desc or field
 
 
 def _fmt(value) -> str:

@@ -497,7 +497,13 @@ def _confirm_written(question: str, updates: Dict[str, Any],
     实测过：一旦告诉它「还缺哪几项」，它每条回复都要罗列一遍，客服看得烦。
     缺项由界面右侧的面板显示，那里是程序实时算的，比模型说一遍更准。
     """
-    note = ("、".join(f"{k}={v}" for k, v in updates.items()) if ok
+    # 用中文名给客服确认（「这次有没有导航图=有」），别把 nav_map_available 这种键名甩给她
+    try:
+        from app_workbench import DISPLAY_NAME as _DN
+        _name = lambda k: _DN.get(k) or (store.ALLOWED_FIELDS.get(k) or k).split("，")[0].split("（")[0]
+    except Exception:
+        _name = lambda k: k
+    note = ("、".join(f"{_name(k)}={v}" for k, v in updates.items()) if ok
             else f"写入失败，原因是：{err}")
     prefix = "写入成功的字段：" if ok else ""
     resp = _client.chat.completions.create(

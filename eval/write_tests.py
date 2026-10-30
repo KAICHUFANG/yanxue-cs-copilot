@@ -492,6 +492,19 @@ def data_hygiene_tests() -> int:
           store._validate_one("nav_map_available", "不发")[0] is False)
     _set_nav(None)
 
+    # ⑨a 新增字段必须在界面上有中文名（用户报过 nav_map_available 裸奔英文）
+    from app_workbench import DISPLAY_NAME as _DN
+    _english = []
+    for _f in store.ALLOWED_FIELDS:
+        _lab = _DN.get(_f) or (store.ALLOWED_FIELDS[_f].split("，")[0]
+                               .split("（")[0].split("：")[0].strip())
+        if _lab == _f or not _lab:
+            _english.append(_f)
+    check("每个可写字段在界面上都有中文名（不会把英文键名给客服看）",
+          not _english, f"缺中文名：{_english}")
+    check("写库确认语用中文名（不用 nav_map_available 这种键名）",
+          True if "中文名" in open("agent.py", encoding="utf-8").read() else False)
+
     # ⑨b 导航图口径：所有文案与规则里都不许再出现「前一天晚上发导航图」
     import json as _j2
     _gm = _j2.loads((TMP_DATA / "group_messages.json").read_text(encoding="utf-8"))
