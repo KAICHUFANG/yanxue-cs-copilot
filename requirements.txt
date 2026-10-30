@@ -1,4 +1,9 @@
-# 钉主版本：openai 3.x 改过构造时的凭证校验行为，跳大版本会静默改变启动行为
+# Pin major versions: openai 3.x validates credentials when the client is
+# constructed (OpenAI(api_key="") raises immediately), so jumping a major
+# version silently changes startup behaviour.
+# NOTE: keep this file ASCII-only. pip reads requirements files with the
+# system locale codec (GBK on Chinese Windows), so non-ASCII comments make
+# `pip install -r requirements.txt` crash with UnicodeDecodeError.
 openai>=3.41,<4
 python-dotenv>=1.2,<2
 streamlit>=1.66,<2
