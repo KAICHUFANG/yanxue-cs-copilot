@@ -60,10 +60,12 @@ MODEL = os.getenv("MODEL_NAME", "deepseek-chat").strip()
 DATA_DIR = ROOT / "data"
 DATA_FILE = Path(os.getenv("ACTIVITIES_FILE", DATA_DIR / "activities.json"))
 
-# ---- 进校预约的被访人信息 ----
-# 已迁到 data/activities.json 的顶层 team_info（唯一来源）。
-# 以前这里还有两个 .env 常量做兜底，结果出现双源：有人改了 .env 却发现没生效
-# （renderer 优先用 team_info）。单一来源比「多一层保险」重要。
+# ---- 进校预约的被访人（老师）信息 ----
+# **唯一存储位置就是 .env**（.env 在 .gitignore 里，不进仓库、不进 GitHub）。
+# 别放到 data/ 下的任何 json —— 那些文件是被 git 跟踪的，手机号会被推到公开仓库
+# （2026-10-30 就这么泄漏过一次）。
+VISIT_TARGET_NAME = os.getenv("VISIT_TARGET_NAME", "").strip()
+VISIT_TARGET_PHONE = os.getenv("VISIT_TARGET_PHONE", "").strip()
 
 # 使用记录里记成谁。本地模式下一个人一台电脑，所以在 .env 里写死最省事，
 # 不需要在界面上多一个输入框（用户明确要求：记录不要放在面板里）。
@@ -117,12 +119,15 @@ def reload() -> None:
     只改文件不重读的话，界面显示「已保存」但程序still 用旧值（这个坑很隐蔽）。
     """
     global API_KEY, BASE_URL, MODEL, CHAT_LOG_OPERATOR, KEY_SOURCE
+    global VISIT_TARGET_NAME, VISIT_TARGET_PHONE
     global TEMPERATURE, MAX_TOOL_ROUNDS
     load_dotenv(ENV_PATH, override=True)
     API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
     BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
     MODEL = os.getenv("MODEL_NAME", "deepseek-chat").strip()
     CHAT_LOG_OPERATOR = os.getenv("CHAT_LOG_OPERATOR", "").strip()
+    VISIT_TARGET_NAME = os.getenv("VISIT_TARGET_NAME", "").strip()
+    VISIT_TARGET_PHONE = os.getenv("VISIT_TARGET_PHONE", "").strip()
     KEY_SOURCE = (".env" if (API_KEY and _key_in_env_file())
                   else ("系统环境变量" if API_KEY else "未配置"))
     TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))

@@ -54,37 +54,28 @@ def load_activities() -> Dict[str, Any]:
 # **单独一个文件，且已 gitignore**：这是个人信息，绝不能进公开仓库。
 # 踩过的错：一度塞进 activities.json（被 git 跟踪）→ 手机号被推到 GitHub 上。
 # 现在的原则：个人信息只落在 data/team_info.local.json，仓库里只有 .example 模板。
-TEAM_INFO_REL = "team_info.local.json"
-
-
-def team_info_path():
-    return Path(config.DATA_DIR) / TEAM_INFO_REL
-
-
+# 老师（进校预约的被访人）姓名/电话 —— **唯一存储位置就是 .env**。
+# .env 在 .gitignore 里，不会进仓库、不会进 GitHub。
+# 为什么不能放 data/*.json：那些文件被 git 跟踪，手机号会被推到公开仓库
+# （2026-10-30 真实泄漏过一次：放进了 activities.json）。
 def load_team_info() -> Dict[str, Any]:
-    """读被访人信息。文件不存在时返回空串（渲染时会留占位符并申报）。"""
-    try:
-        d = json.loads(team_info_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {"visit_target_name": "", "visit_target_phone": ""}
+    """读被访人信息（来自 .env）。没有就返回空串，渲染时留占位符并申报。"""
     return {
-        "visit_target_name": str(d.get("visit_target_name") or "").strip(),
-        "visit_target_phone": str(d.get("visit_target_phone") or "").strip(),
+        "visit_target_name": getattr(config, "VISIT_TARGET_NAME", "") or "",
+        "visit_target_phone": getattr(config, "VISIT_TARGET_PHONE", "") or "",
     }
 
 
 def save_team_info(name: str, phone: str) -> None:
-    """写回本地文件（只动这两个字段）。这个文件不进仓库。"""
-    d = load_team_info()
-    if name.strip():
-        d["visit_target_name"] = name.strip()
-    if phone.strip():
-        d["visit_target_phone"] = phone.strip()
-    d["_note"] = "本文件含个人信息，已在 .gitignore 里，不进仓库、不进 GitHub。"
-    path = team_info_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(d, ensure_ascii=False, indent=2) + chr(10),
-                    encoding="utf-8", newline=chr(10))
+    """写回 .env 的 VISIT_TARGET_NAME / VISIT_TARGET_PHONE（其余项原样保留）。"""
+    updates = {}
+    if str(name).strip():
+        updates["VISIT_TARGET_NAME"] = str(name).strip()
+    if str(phone).strip():
+        updates["VISIT_TARGET_PHONE"] = str(phone).strip()
+    if updates:
+        config.save_env(updates)
+        config.reload()
 
 
 def load_processes() -> Dict[str, Any]:

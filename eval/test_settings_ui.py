@@ -116,21 +116,22 @@ def main() -> int:
         check("界面上没有「团队信息」面板（用户要求移出窗口）",
               "团队信息" not in texts(at), "界面上仍有团队信息相关文字")
 
-        kb = json.loads(TMP_ACT.read_text(encoding="utf-8"))
-        before_team = dict(kb.get("team_info") or {})
+        # 老师信息唯一存储位置 = .env（不进仓库）。改它走对话框，写入 .env。
+        before_team = dict(knowledge.load_team_info())
         r = agent.answer_chat("被访人电话改成 13900002222")
-        check("走对话框改团队信息，走的是 save_team_info",
+        check("走对话框改被访人信息，走的是 save_team_info",
               "save_team_info" in (r.get("trace") or []), str(r.get("trace")))
+        check("新电话写进了 .env",
+              "13900002222" in ENV.read_text(encoding="utf-8"),
+              ENV.read_text(encoding="utf-8")[-120:])
         kb2 = json.loads(TMP_ACT.read_text(encoding="utf-8"))
-        check("新电话写进了顶层 team_info",
-              (kb2.get("team_info") or {}).get("visit_target_phone") == "13900002222")
-        check("没写进 activities[0]（否则换期会丢）",
-              "visit_target_phone" not in (kb2.get("activities") or [{}])[0])
-        # 模拟换期：整条替换后 team_info 必须还在
+        check("没有污染活动数据（activities.json 里不存老师信息）",
+              "visit_target_phone" not in (kb2.get("activities") or [{}])[0]
+              and "team_info" not in kb2)
+        # 换期不影响 .env，本来就是分开的
         store.update_activity(None, {"session_label": "第九十九期"}, replace=True)
-        kb3 = json.loads(TMP_ACT.read_text(encoding="utf-8"))
-        check("换期后团队信息还在",
-              (kb3.get("team_info") or {}).get("visit_target_phone") == "13900002222")
+        check("换期后被访人信息仍在（因为他不在活动数据里）",
+              "13900002222" in ENV.read_text(encoding="utf-8"))
         knowledge.save_team_info(before_team.get("visit_target_name", ""),
                                 before_team.get("visit_target_phone", ""))
 

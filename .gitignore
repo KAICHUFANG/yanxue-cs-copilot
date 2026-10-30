@@ -32,5 +32,3 @@ desktop.ini
 # ---- 使用记录（含家长问句，不进仓库）----
 data/logs/
 
-# ---- 个人信息（老师姓名/电话），绝不能进仓库 ----
-data/team_info.local.json

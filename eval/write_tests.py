@@ -269,8 +269,15 @@ def copy_layer_tests() -> int:
     if _team["visit_target_name"] and _team["visit_target_phone"]:
         check("team_info 里的被访人姓名/电话填进了预约文案",
               _team["visit_target_name"] in first and _team["visit_target_phone"] in first)
-    check("被访人只有 team_info 一个来源（.env 里不再有 VISIT_TARGET_*）",
-          not hasattr(config, "VISIT_TARGET_NAME"))
+    # 被访人（老师信息）的唯一存储位置是 .env —— 它不进仓库。
+    check("被访人信息在 .env（config 有 VISIT_TARGET_*）",
+          hasattr(config, "VISIT_TARGET_NAME"))
+    import subprocess as _sp
+    _tracked = _sp.run(["git", "grep", "-l", "--", "data/"], cwd=str(PROJ),
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _leak = [ln for ln in (_tracked.stdout or "").splitlines()
+             if "team_info" in ln and "example" not in ln]
+    check("data/ 下的受跟踪文件里没有 team_info（老师信息不进仓库）", not _leak, str(_leak)[:80])
     # 临时清空 team_info，验证「没配 → 保留占位符并申报」
     _orig = knowledge.load_team_info
     knowledge.load_team_info = lambda *a, **k: {"visit_target_name": "", "visit_target_phone": ""}
