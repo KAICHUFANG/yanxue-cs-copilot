@@ -483,15 +483,19 @@ def data_hygiene_tests() -> int:
 
     _set_nav("没有")
     out_no = _r.render_location_share(_aid)
-    check("状态=没有 → 文案改成「不另发导航图」",
-          "不另发导航图" in out_no, out_no[:80])
+    check("状态=没有 → 文案改成「不另发引导照片」",
+          "不另发引导照片" in out_no, out_no[:80])
     check("状态=没有 → 不能再出现「开始前半小时」这种承诺",
           "开始前半小时" not in out_no)
-    # 概念：导航图是「帮家长找精确集合位置」，不是指路（路线由定位解决）
-    check("导航图不被说成指路（不出现「怎么走 / 哪条路线」）",
-          not any(w in out_yes + out_no for w in ("怎么走", "哪条路线", "走哪条路")))
-    check("导航图说明里写的是找「精确集合位置」",
-          "入口" in out_yes or "集合点" in out_yes, out_yes[:80])
+    # 概念（用户纠正过两次）：
+    #   ① 导航图是一组沿步行路线拍的引导照片，给人走用 —— 不是给车看
+    #   ② 它解决「到了附近怎么找到精确集合点」，不是指路（怎么过来由定位解决）
+    _nav_copy = out_yes + out_no
+    check("导航图不被说成给车看的（不出现「车停/停车场」）",
+          not any(w in _nav_copy for w in ("车停", "停车场", "开车过去")), _nav_copy[:80])
+    check("导航图不被说成指路路线", not any(w in _nav_copy for w in ("怎么走", "哪条路线")))
+    check("写明是「一组照片」且「沿步行路线」",
+          "一组" in out_yes and ("走路" in out_yes or "步行" in out_yes), out_yes[:100])
 
     check("非法状态会被 store 拒绝",
           store._validate_one("nav_map_available", "不发")[0] is False)
