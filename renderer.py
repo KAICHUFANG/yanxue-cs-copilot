@@ -309,6 +309,23 @@ def render_group_messages(
         for msg in st.get("messages") or []:
             if only_tags and msg.get("tag") not in only_tags:
                 continue
+
+            # 有前置条件的条目（目前只有「回顾分享」）：条件不满足就不生成正文。
+            # 真实报过的问题：一键生成群文案时把「活动回顾推文出来啦」也吐出来了，
+            # 而那时活动回顾推文根本还没发；而且它把 {{具体细节}} 列进「需人工补」，
+            # 让人以为要自己写 —— 实际应该按回顾推文自动拟。所以这里直接不生成。
+            if msg.get("requires_review"):
+                import knowledge as _kb
+                if not (_kb.load_review() or "").strip():
+                    out.append({
+                        "stage": st["stage"],
+                        "label": msg.get("label", ""),
+                        "note": msg.get("requires_note")
+                                or "这段要等活动回顾推文出来才能写。",
+                        "ready": False,
+                    })
+                    continue
+
             if msg.get("type") == "manual_send_required":
                 inline.append({
                     "stage": st["stage"],

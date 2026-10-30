@@ -431,7 +431,29 @@ def data_hygiene_tests() -> int:
     check("生成的群文案原文.md 收录了全部模板", len(in_gen) == len(texts),
           f"{len(in_gen)}/{len(texts)}")
 
-    # ⑨ 阶段关键词映射（纯代码，用户报过「预约进校文案」被渲染成欢迎语）
+    # ⑨ 回顾分享的前置条件：没有本期回顾推文时不许生成（用户报过「现在就生成」）
+    reset()
+    # 前面的 copy_layer_tests 会往测试副本里存一份回顾推文，这里先清掉，
+    # 否则「没有回顾推文」这个前提不成立（测试之间互相污染过一次）。
+    shutil.rmtree(TMP_DATA / "articles" / "reviews", ignore_errors=True)
+    if knowledge.load_review():
+        check("（前置条件测试前提：本期没有回顾推文）", False, "本期已有回顾推文，测试前提不成立")
+    else:
+        import json as _json, renderer as _r
+        # 注意用题库里的期次 id：测试副本跑的是冻结题库（S16），不是真实的 S18
+        _aid = (knowledge.get_activity() or {}).get("id") or "S16"
+        d = _json.loads(_r.render_group_messages(_aid))
+        rev = [m for m in d["messages"] if "回顾" in (m.get("label") or "")]
+        check("没有回顾推文时，回顾分享不生成正文",
+              rev and all("text" not in m for m in rev), str(rev)[:120])
+        check("改为给出一条「等回顾推文」的提示",
+              rev and any("回顾" in (m.get("note") or "") for m in rev))
+        check("{{具体细节}} 不再出现在「需人工补」清单里",
+              "{{具体细节}}" not in d["unfilled_summary"], str(d["unfilled_summary"]))
+        check("活动结束感谢（同一阶段另一段）仍然正常生成",
+              any("圆满结束" in (m.get("text") or "") for m in d["messages"]))
+
+    # ⑩ 阶段关键词映射（纯代码，用户报过「预约进校文案」被渲染成欢迎语）
     checks = {
         "写个拉群欢迎语": "①", "生成预约进校文案": "②", "进校预约提醒": "②",
         "写个活动前一天的活动提醒": "③", "写个当天的出发提醒": "④",
