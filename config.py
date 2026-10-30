@@ -28,6 +28,27 @@ CODE_VERSION = 7
 
 # ---- 模型相关 ----
 API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
+
+# Key 到底从哪来的？两种来源行为完全不同，必须能说清楚：
+#   .env             —— 本程序的配置，改了就生效
+#   系统环境变量      —— Windows 用户/系统级变量，**每个进程都会继承**
+#                        （便携版没带 .env 时就会落到它上面，导致「不用输 Key 就能用」）
+# 没有这个标记，就会出现「改了 .env 不生效」「客服电脑上残留的别人的 Key 被静默用掉」。
+KEY_SOURCE = "未配置"
+
+
+def _key_in_env_file() -> bool:
+    try:
+        for ln in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
+            if ln.strip().startswith("DEEPSEEK_API_KEY=") and ln.split("=", 1)[1].strip():
+                return True
+    except OSError:
+        pass
+    return False
+
+
+KEY_SOURCE = (".env" if (API_KEY and _key_in_env_file())
+              else ("系统环境变量" if API_KEY else "未配置"))
 BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
 MODEL = os.getenv("MODEL_NAME", "deepseek-chat").strip()
 
@@ -95,13 +116,15 @@ def reload() -> None:
     必须调：模块级的 API_KEY / MODEL 是启动时读的一次快照，
     只改文件不重读的话，界面显示「已保存」但程序still 用旧值（这个坑很隐蔽）。
     """
-    global API_KEY, BASE_URL, MODEL, CHAT_LOG_OPERATOR
+    global API_KEY, BASE_URL, MODEL, CHAT_LOG_OPERATOR, KEY_SOURCE
     global TEMPERATURE, MAX_TOOL_ROUNDS
     load_dotenv(ENV_PATH, override=True)
     API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
     BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
     MODEL = os.getenv("MODEL_NAME", "deepseek-chat").strip()
     CHAT_LOG_OPERATOR = os.getenv("CHAT_LOG_OPERATOR", "").strip()
+    KEY_SOURCE = (".env" if (API_KEY and _key_in_env_file())
+                  else ("系统环境变量" if API_KEY else "未配置"))
     TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
     MAX_TOOL_ROUNDS = int(os.getenv("MAX_TOOL_ROUNDS", "6"))
 
@@ -120,7 +143,7 @@ def describe() -> str:
     lines = [
         f"模型      : {MODEL}",
         f"接口地址  : {BASE_URL}",
-        f"使用的 Key: {mask(API_KEY)}（来自 .env）",
+        f"使用的 Key: {mask(API_KEY)}（来自 {KEY_SOURCE}）",
         f"知识库    : {DATA_FILE}",
     ]
     if _ENV_KEY_BEFORE and _ENV_KEY_BEFORE != API_KEY:

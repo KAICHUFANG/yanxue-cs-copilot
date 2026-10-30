@@ -9,6 +9,9 @@ rem  NOTE: keep this file ASCII-only. cmd mis-splits multi-byte
 rem        characters in .bat files; Chinese text goes to .txt.
 rem ============================================================
 
+rem isolate from OS env: ignore any machine-level DEEPSEEK_API_KEY
+rem (otherwise a stray key on this PC would be used silently)
+set "DEEPSEEK_API_KEY="
 if not exist ".venv\Scripts\python.exe" goto NOVENV
 
 echo.

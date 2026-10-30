@@ -184,8 +184,16 @@ with st.expander("🔑 API 设置 · 第一次使用请先填这里", expanded=b
 
     st.markdown(
         f"当前：Key `{config.mask(config.API_KEY) if config.API_KEY else '（未填）'}`"
+        f"（来自 **{config.KEY_SOURCE}**）"
         f"　·　接口 `{config.BASE_URL}`　·　模型 `{config.MODEL}`"
     )
+    if config.KEY_SOURCE == "系统环境变量":
+        st.warning("当前这个 Key 不是你文件夹里 `.env` 的，而是这台电脑的**系统环境变量**里的。"
+                   + chr(10) + chr(10)
+                   + "后果：改 `.env` 不会生效；换一台机器就没了；"
+                     "如果这台电脑上有别人留下的同名变量，会静默用掉别人的 Key。"
+                   + chr(10) + chr(10)
+                   + "要改成用本程序的配置：在下面填一次 Key 并保存，就会生成本文件夹的 `.env`。")
 
     _c1, _c2 = st.columns([1.7, 1])
     _key_in = _c1.text_input(

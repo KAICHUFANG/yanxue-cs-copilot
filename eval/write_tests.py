@@ -509,6 +509,15 @@ def data_hygiene_tests() -> int:
           store._validate_one("nav_map_available", "不发")[0] is False)
     _set_nav(None)
 
+    # ⑧c Key 来源可判定 + 启动脚本必须隔离系统环境变量
+    check("config 能说明 Key 来自哪里（.env / 系统环境变量 / 未配置）",
+          getattr(config, "KEY_SOURCE", None) in (".env", "系统环境变量", "未配置"),
+          str(getattr(config, "KEY_SOURCE", None)))
+    _bat = (PROJ / "启动工作台.bat").read_bytes().decode("ascii", "replace")
+    check("启动脚本会清空系统环境变量里的 DEEPSEEK_API_KEY",
+          'set "DEEPSEEK_API_KEY="' in _bat,
+          "否则客服电脑上残留的同名变量会被静默使用")
+
     # ⑨a 新增字段必须在界面上有中文名（用户报过 nav_map_available 裸奔英文）
     from app_workbench import DISPLAY_NAME as _DN
     _english = []
